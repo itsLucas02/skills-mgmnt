@@ -3,7 +3,7 @@ import { promisify } from "node:util"
 import { NextResponse } from "next/server"
 
 import { isLocalRequest } from "@/lib/local-request"
-import { getOpenablePath } from "@/lib/skills"
+import { getOpenableTarget } from "@/lib/skills"
 
 const execFileAsync = promisify(execFile)
 
@@ -23,21 +23,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Missing open target id." }, { status: 400 })
   }
 
-  const targetPath = getOpenablePath(payload.id)
+  const target = getOpenableTarget(payload.id)
 
-  if (!targetPath) {
+  if (!target) {
     return NextResponse.json({ error: "Open target is outside the allowed local roots." }, { status: 403 })
   }
 
   try {
-    await execFileAsync("cmd.exe", ["/c", "antigravity.cmd", "--reuse-window", "--goto", `${targetPath}:1`], {
+    await execFileAsync("cmd.exe", ["/c", "antigravity.cmd", "--reuse-window", "--goto", `${target.path}:${target.line}`], {
       windowsHide: true,
     })
-    return NextResponse.json({ ok: true, openedWith: "Antigravity", path: targetPath })
+    return NextResponse.json({ ok: true, openedWith: "Antigravity", path: target.path, line: target.line })
   } catch (antigravityError) {
     try {
-      await execFileAsync("explorer.exe", [`/select,${targetPath}`], { windowsHide: true })
-      return NextResponse.json({ ok: true, openedWith: "Windows Explorer", path: targetPath })
+      await execFileAsync("explorer.exe", [`/select,${target.path}`], { windowsHide: true })
+      return NextResponse.json({ ok: true, openedWith: "Windows Explorer", path: target.path, line: target.line })
     } catch (explorerError) {
       return NextResponse.json(
         {

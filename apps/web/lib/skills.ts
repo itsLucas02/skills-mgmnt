@@ -13,6 +13,26 @@ export type SkillSource =
   | "Plugin cache"
   | "Third party"
 
+export type OriginConfidence = "known" | "inferred" | "unknown"
+
+export type CapabilityOrigin = {
+  label: string
+  confidence: OriginConfidence
+  detail: string
+}
+
+export type ControlGate = {
+  type: "skill-config" | "plugin-config" | "mcp-config" | "plugin-manifest" | "default" | "folder"
+  label: string
+  path?: string
+  relativePath?: string
+  line?: number
+  section?: string
+  editable: boolean
+  reason: string
+  detailId?: string
+}
+
 export type EffectiveStatus =
   | "active"
   | "disabled-by-skill"
@@ -30,6 +50,9 @@ export type ManagedSkill = {
   status: "active" | "disabled"
   effectiveStatus: EffectiveStatus
   statusReason: string
+  editable: boolean
+  origin: CapabilityOrigin
+  controlGate: ControlGate
   parentPluginKey?: string
   parentPluginName?: string
 }
@@ -46,6 +69,8 @@ export type ManagedPlugin = {
   relativePath: string
   enabled: boolean
   statusReason: string
+  origin: CapabilityOrigin
+  controlGate: ControlGate
   version?: string
   repository?: string
   homepage?: string
@@ -63,6 +88,9 @@ export type ManagedMcpServer = {
   transport: "command" | "url" | "unknown"
   endpoint: string
   statusReason: string
+  editable: boolean
+  origin: CapabilityOrigin
+  controlGate: ControlGate
   path?: string
   relativePath?: string
 }
@@ -88,6 +116,8 @@ export type SkillDetail = {
   status: string
   statusReason: string
   source: string
+  origin: CapabilityOrigin
+  controlGate: ControlGate
   path?: string
   relativePath?: string
   parentPluginKey?: string
@@ -107,11 +137,18 @@ const SEARCH_ROOTS = [
   { path: path.join(CODEX_HOME, ".tmp", "marketplaces"), source: "Third party" },
 ] satisfies Array<{ path: string; source: SkillSource }>
 
-const SAFE_OPEN_ROOTS = SEARCH_ROOTS.map((root) => root.path)
+const SAFE_OPEN_ROOTS = [...SEARCH_ROOTS.map((root) => root.path), CODEX_CONFIG_PATH]
+
+type ConfigGateEntry = {
+  enabled: boolean
+  line: number
+  section: string
+}
 
 type CodexConfigState = {
   disabledSkillPaths: Set<string>
-  plugins: Map<string, boolean>
+  skillEntries: Map<string, ConfigGateEntry>
+  plugins: Map<string, ConfigGateEntry>
   mcpServers: Map<string, ManagedMcpServer>
 }
 
@@ -232,11 +269,12 @@ export function getSkillDetail(detailId: string): SkillDetail | null {
       status: formatStatus(skill.effectiveStatus),
       statusReason: skill.statusReason,
       source: skill.source,
+      origin: skill.origin,
+      controlGate: skill.controlGate,
       path: skill.path,
       relativePath: skill.relativePath,
       parentPluginKey: skill.parentPluginKey,
       metadata: [
-        { label: "Source", value: skill.source },
         { label: "Parent plugin", value: skill.parentPluginKey ?? "Standalone skill" },
         { label: "Path", value: skill.relativePath },
       ],
@@ -254,6 +292,8 @@ export function getSkillDetail(detailId: string): SkillDetail | null {
       status: plugin.enabled ? "Active" : "Disabled by plugin config",
       statusReason: plugin.statusReason,
       source: plugin.source,
+      origin: plugin.origin,
+      controlGate: plugin.controlGate,
       path: plugin.path,
       relativePath: plugin.relativePath,
       metadata: [
@@ -278,6 +318,8 @@ export function getSkillDetail(detailId: string): SkillDetail | null {
       status: mcpServer.enabled ? "Active" : "Disabled",
       statusReason: mcpServer.statusReason,
       source: mcpServer.source,
+      origin: mcpServer.origin,
+      controlGate: mcpServer.controlGate,
       path: mcpServer.path,
       relativePath: mcpServer.relativePath,
       parentPluginKey: mcpServer.parentPluginKey,
@@ -286,7 +328,9 @@ export function getSkillDetail(detailId: string): SkillDetail | null {
         { label: "Endpoint", value: mcpServer.endpoint },
         { label: "Parent plugin", value: mcpServer.parentPluginKey ?? "Codex config" },
       ],
-      contentPreview: mcpServer.path ? readPreview(mcpServer.path) : undefined,
+      contentPreview: mcpServer.source === "Codex config"
+        ? "Codex config preview is intentionally hidden because config.toml can contain tokens or local secrets. Use Open config gate to inspect it locally."
+        : mcpServer.path ? readPreview(mcpServer.path) : undefined,
     }
   }
 
@@ -417,9 +461,11 @@ function createManagedPlugin(
   config: CodexConfigState,
   metadata: PluginMetadata
 ): ManagedPlugin {
-  const enabled = config.plugins.get(key) ?? true
+  const configEntry = config.plugins.get(key)
+  const enabled = configEntry?.enabled ?? true
   const appPath = path.join(pluginPath, ".app.json")
   const appMetadata = readJson<AppMetadata>(appPath)
+  const origin = getPluginOrigin(marketplace, source)
 
   return {
     key,
@@ -438,6 +484,8 @@ function createManagedPlugin(
     statusReason: enabled
       ? "Enabled by Codex plugin config or default"
       : `Disabled by [plugins."${key}"] in Codex config`,
+    origin,
+    controlGate: getPluginControlGate(key, configEntry),
     version: metadata.version,
     repository: metadata.repository,
     homepage: metadata.homepage,
@@ -475,6 +523,8 @@ function walkForSkillFiles(
     const pluginKey = getPluginKeyForSkillPath(entryPath)
     const parentPlugin = pluginKey ? pluginMap.get(pluginKey) : undefined
     const status = getSkillStatus(entryPath, config, parentPlugin)
+    const origin = parentPlugin?.origin ?? getSkillOrigin(entryPath, source)
+    const controlGate = getSkillControlGate(entryPath, status.effectiveStatus, config, parentPlugin)
     const skill: ManagedSkill = {
       id: entryPath,
       detailId: encodeDetailId(entryPath),
@@ -486,6 +536,11 @@ function walkForSkillFiles(
       status: status.effectiveStatus === "active" ? "active" : "disabled",
       effectiveStatus: status.effectiveStatus,
       statusReason: status.reason,
+      editable:
+        status.effectiveStatus !== "disabled-by-plugin" &&
+        status.effectiveStatus !== "installed-not-loaded",
+      origin,
+      controlGate,
       parentPluginKey: parentPlugin?.key,
       parentPluginName: parentPlugin?.displayName,
     }
@@ -578,25 +633,156 @@ function getSkillStatus(
 
   return {
     effectiveStatus: "active" as const,
-    reason: parentPlugin
-      ? `Loaded through enabled plugin ${parentPlugin.key}`
-      : "Standalone skill with no disable rule found",
+    reason: parentPlugin ? "Controlled by enabled plugin" : "Enabled by default",
+  }
+}
+
+function getSkillOrigin(skillPath: string, source: SkillSource): CapabilityOrigin {
+  if (isInsidePath(path.join(CODEX_HOME, "skills", ".system"), skillPath)) {
+    return {
+      label: "Codex system",
+      confidence: "known",
+      detail: "Bundled in the Codex system skills folder.",
+    }
+  }
+
+  if (source === "Codex local") {
+    return {
+      label: "Codex local",
+      confidence: "inferred",
+      detail: "Installed or copied into the local Codex skills folder.",
+    }
+  }
+
+  if (source === "Agent local") {
+    return {
+      label: "Agent shared",
+      confidence: "inferred",
+      detail: "Loaded from the shared .agents skills folder.",
+    }
+  }
+
+  return {
+    label: source,
+    confidence: "inferred",
+    detail: "Origin inferred from the scanned folder.",
+  }
+}
+
+function getPluginOrigin(marketplace: string, source: SkillSource): CapabilityOrigin {
+  if (marketplace.startsWith("openai-")) {
+    return {
+      label: "OpenAI plugin",
+      confidence: "known",
+      detail: `Installed from the ${marketplace} plugin marketplace/cache.`,
+    }
+  }
+
+  if (source === "Third party") {
+    return {
+      label: "Third-party plugin",
+      confidence: "inferred",
+      detail: `Installed from the ${marketplace} marketplace cache.`,
+    }
+  }
+
+  return {
+    label: "Plugin",
+    confidence: "inferred",
+    detail: `Installed from the ${marketplace} plugin cache.`,
+  }
+}
+
+function getSkillControlGate(
+  skillPath: string,
+  status: EffectiveStatus,
+  config: CodexConfigState,
+  parentPlugin?: ManagedPlugin
+): ControlGate {
+  if (parentPlugin) {
+    return parentPlugin.controlGate
+  }
+
+  if (status === "installed-not-loaded") {
+    return {
+      type: "folder",
+      label: "Folder naming",
+      editable: false,
+      reason: "This skill is disabled by its folder name, not by Codex config.",
+    }
+  }
+
+  const configEntry = config.skillEntries.get(normalizePath(skillPath))
+  if (configEntry) {
+    return getConfigControlGate("skill-config", "Skill config", configEntry.section, configEntry.line, true)
+  }
+
+  return {
+    type: "default",
+    label: "Default-enabled skill",
+    path: CODEX_CONFIG_PATH,
+    relativePath: path.relative(HOME, CODEX_CONFIG_PATH),
+    section: "config.toml",
+    editable: false,
+    reason: "No exact config gate exists yet; this skill is enabled by default until a staged change writes one.",
+    detailId: encodeDetailId(CODEX_CONFIG_PATH),
+  }
+}
+
+function getPluginControlGate(pluginKey: string, configEntry?: ConfigGateEntry): ControlGate {
+  if (configEntry) {
+    return getConfigControlGate("plugin-config", "Plugin config", configEntry.section, configEntry.line, true)
+  }
+
+  return {
+    type: "default",
+    label: "Default-enabled plugin",
+    path: CODEX_CONFIG_PATH,
+    relativePath: path.relative(HOME, CODEX_CONFIG_PATH),
+    section: "config.toml",
+    editable: false,
+    reason: "No exact config gate exists yet; this plugin is enabled by default until a staged change writes one.",
+    detailId: encodeDetailId(CODEX_CONFIG_PATH),
+  }
+}
+
+function getConfigControlGate(
+  type: Extract<ControlGate["type"], "skill-config" | "plugin-config" | "mcp-config">,
+  label: string,
+  section: string,
+  line: number,
+  editable: boolean
+): ControlGate {
+  return {
+    type,
+    label,
+    path: CODEX_CONFIG_PATH,
+    relativePath: path.relative(HOME, CODEX_CONFIG_PATH),
+    line,
+    section,
+    editable,
+    reason: `Controlled by ${section} in Codex config.toml.`,
+    detailId: encodeDetailId(`${CODEX_CONFIG_PATH}#line:${line}`),
   }
 }
 
 function readCodexConfigState(): CodexConfigState {
   const disabledSkillPaths = new Set<string>()
-  const plugins = new Map<string, boolean>()
+  const skillEntries = new Map<string, ConfigGateEntry>()
+  const plugins = new Map<string, ConfigGateEntry>()
   const mcpServers = new Map<string, ManagedMcpServer>()
 
   if (!existsSync(CODEX_CONFIG_PATH)) {
-    return { disabledSkillPaths, plugins, mcpServers }
+    return { disabledSkillPaths, skillEntries, plugins, mcpServers }
   }
 
   const lines = readFileSync(CODEX_CONFIG_PATH, "utf8").split(/\r?\n/)
   let section = ""
+  let sectionLine = 1
   let pendingSkillPath: string | null = null
+  let pendingSkillLine = 1
   let currentMcpName: string | null = null
+  let currentMcpLine = 1
   let currentMcpEnabled = true
   let currentMcpTransport: ManagedMcpServer["transport"] = "unknown"
   let currentMcpEndpoint = "Not declared"
@@ -616,20 +802,31 @@ function readCodexConfigState(): CodexConfigState {
       statusReason: currentMcpEnabled
         ? "Enabled in Codex MCP config"
         : "Disabled in Codex MCP config",
+      editable: true,
+      origin: {
+        label: "Codex config",
+        confidence: "known",
+        detail: "Declared directly in Codex config.toml.",
+      },
+      controlGate: getConfigControlGate("mcp-config", `MCP server ${currentMcpName}`, `mcp_servers.${currentMcpName}`, currentMcpLine, true),
       path: CODEX_CONFIG_PATH,
       relativePath: path.relative(HOME, CODEX_CONFIG_PATH),
     })
   }
 
-  for (const line of lines) {
+  for (const [index, line] of lines.entries()) {
+    const lineNumber = index + 1
     const trimmed = line.trim()
     const sectionMatch = trimmed.match(/^\[(.+)]$/)
 
     if (sectionMatch) {
       flushMcp()
       section = sectionMatch[1] ?? ""
+      sectionLine = lineNumber
       pendingSkillPath = null
+      pendingSkillLine = lineNumber
       currentMcpName = null
+      currentMcpLine = lineNumber
       currentMcpEnabled = true
       currentMcpTransport = "unknown"
       currentMcpEndpoint = "Not declared"
@@ -637,6 +834,7 @@ function readCodexConfigState(): CodexConfigState {
       const mcpMatch = section.match(/^mcp_servers\.([^.]+)$/)
       if (mcpMatch) {
         currentMcpName = mcpMatch[1]?.replace(/^"|"$/g, "") ?? null
+        currentMcpLine = lineNumber
       }
 
       continue
@@ -648,11 +846,22 @@ function readCodexConfigState(): CodexConfigState {
 
       if (pathMatch) {
         pendingSkillPath = parseTomlString(pathMatch[1] ?? "")
+        pendingSkillLine = sectionLine
         continue
       }
 
-      if (enabledMatch?.[1] === "false" && pendingSkillPath) {
-        disabledSkillPaths.add(normalizePath(pendingSkillPath))
+      if (enabledMatch?.[1] && pendingSkillPath) {
+        const normalizedPath = normalizePath(pendingSkillPath)
+        const enabled = enabledMatch[1] === "true"
+        skillEntries.set(normalizedPath, {
+          enabled,
+          line: pendingSkillLine,
+          section: "[[skills.config]]",
+        })
+
+        if (!enabled) {
+          disabledSkillPaths.add(normalizedPath)
+        }
       }
 
       continue
@@ -660,7 +869,12 @@ function readCodexConfigState(): CodexConfigState {
 
     const pluginMatch = section.match(/^plugins\."(.+)"$/)
     if (pluginMatch && trimmed.startsWith("enabled =")) {
-      plugins.set(pluginMatch[1] ?? "", trimmed.endsWith("true"))
+      const pluginKey = pluginMatch[1] ?? ""
+      plugins.set(pluginKey, {
+        enabled: trimmed.endsWith("true"),
+        line: sectionLine,
+        section: `plugins."${pluginKey}"`,
+      })
       continue
     }
 
@@ -679,7 +893,7 @@ function readCodexConfigState(): CodexConfigState {
 
   flushMcp()
 
-  return { disabledSkillPaths, plugins, mcpServers }
+  return { disabledSkillPaths, skillEntries, plugins, mcpServers }
 }
 
 function getPluginMcpServers(plugin: ManagedPlugin): ManagedMcpServer[] {
@@ -699,8 +913,23 @@ function getPluginMcpServers(plugin: ManagedPlugin): ManagedMcpServer[] {
     transport: server.url ? "url" : server.command ? "command" : "unknown",
     endpoint: server.url ?? server.command ?? "Not declared",
     statusReason: plugin.enabled
-      ? `Loaded through enabled plugin ${plugin.key}`
-      : `Inactive because plugin ${plugin.key} is disabled`,
+      ? "Controlled by enabled plugin"
+      : "Inactive: plugin disabled",
+    editable: false,
+    origin: plugin.origin,
+    controlGate: plugin.controlGate.path
+      ? plugin.controlGate
+      : {
+          type: "plugin-manifest" as const,
+          label: "Plugin MCP manifest",
+          path: mcpPath,
+          relativePath: path.relative(HOME, mcpPath),
+          line: 1,
+          section: "mcpServers",
+          editable: false,
+          reason: "This MCP server is declared by the plugin and gated by the parent plugin.",
+          detailId: encodeDetailId(`${mcpPath}#line:1`),
+        },
     path: mcpPath,
     relativePath: path.relative(HOME, mcpPath),
   }))
@@ -766,7 +995,20 @@ function readPreview(filePath: string) {
 }
 
 function parseTomlString(value: string) {
-  return value.trim().replace(/^["']|["']$/g, "")
+  const trimmed = value.trim()
+
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
+    return trimmed.slice(1, -1)
+  }
+
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed
+      .slice(1, -1)
+      .replace(/\\\\/g, "\\")
+      .replace(/\\"/g, '"')
+  }
+
+  return trimmed
 }
 
 function normalizePath(filePath: string) {
@@ -780,6 +1022,12 @@ function encodeDetailId(filePath: string) {
 function decodeFilePart(detailId: string) {
   const decodedPath = decodeDetailId(detailId)
   return decodedPath?.split("#")[0] ?? null
+}
+
+function decodeLinePart(detailId: string) {
+  const decodedPath = decodeDetailId(detailId)
+  const lineMatch = decodedPath?.match(/#line:(\d+)$/)
+  return lineMatch?.[1] ? Number(lineMatch[1]) : 1
 }
 
 function sortSkills(left: ManagedSkill, right: ManagedSkill) {
@@ -798,11 +1046,23 @@ function formatStatus(status: EffectiveStatus) {
 }
 
 export function getOpenablePath(detailId: string) {
+  return getOpenableTarget(detailId)?.path ?? null
+}
+
+export function getOpenableTarget(detailId: string) {
   const decodedPath = decodeFilePart(detailId)
 
   if (!decodedPath || !isSafeLocalPath(decodedPath)) {
     return null
   }
 
-  return decodedPath
+  return {
+    path: decodedPath,
+    line: decodeLinePart(detailId),
+  }
+}
+
+function isInsidePath(root: string, targetPath: string) {
+  const relative = path.relative(path.resolve(root), path.resolve(targetPath))
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))
 }
