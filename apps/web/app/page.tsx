@@ -1,19 +1,23 @@
-import { Button } from "@workspace/ui/components/button"
+import { SkillsManagementPage } from "@/components/skills-management-page"
+import { isLocalHostHeader } from "@/lib/local-request"
+import { getCapabilityInventory } from "@/lib/skills"
+import { headers } from "next/headers"
 
-export default function Page() {
-  return (
-    <div className="flex min-h-svh p-6">
-      <div className="flex max-w-md min-w-0 flex-col gap-4 text-sm leading-loose">
-        <div>
-          <h1 className="font-medium">Project ready!</h1>
-          <p>You may now add components and start building.</p>
-          <p>We&apos;ve already added the button component for you.</p>
-          <Button className="mt-2">Button</Button>
-        </div>
-        <div className="text-muted-foreground font-mono text-xs">
-          (Press <kbd>d</kbd> to toggle dark mode)
-        </div>
-      </div>
-    </div>
-  )
+export const dynamic = "force-dynamic"
+
+export default async function Page() {
+  const requestHeaders = await headers()
+
+  if (!isLocalHostHeader(requestHeaders.get("host"))) {
+    return (
+      <main style={{ padding: "2rem", fontFamily: "system-ui, sans-serif" }}>
+        <h1>Local-only dashboard</h1>
+        <p>This app reads local agent configuration and only renders on localhost.</p>
+      </main>
+    )
+  }
+
+  const inventory = getCapabilityInventory()
+
+  return <SkillsManagementPage inventory={inventory} />
 }

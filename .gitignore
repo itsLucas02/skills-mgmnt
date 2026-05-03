@@ -30,7 +30,10 @@ dist
 
 # Debug
 npm-debug.log*
+dev-server*.log
 
 # Misc
 .DS_Store
 *.pem
+.playwright-cli/
+output/
