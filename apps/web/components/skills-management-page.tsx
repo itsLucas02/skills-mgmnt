@@ -74,6 +74,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@workspace/ui/components/tooltip"
+import { cn } from "@workspace/ui/lib/utils"
 
 type CapabilityInventory = {
   skills: ManagedSkill[]
@@ -1213,7 +1214,7 @@ function OriginBadge({ origin }: { origin: CapabilityOrigin }) {
   return (
     <Tooltip>
       <TooltipTrigger render={<span className="inline-flex" />}>
-        <Badge variant={origin.confidence === "known" ? "secondary" : "outline"}>
+        <Badge variant="outline" className={getOriginBadgeClassName(origin.label)}>
           {origin.label}
         </Badge>
       </TooltipTrigger>
@@ -1222,6 +1223,31 @@ function OriginBadge({ origin }: { origin: CapabilityOrigin }) {
       </TooltipContent>
     </Tooltip>
   )
+}
+
+function getOriginBadgeClassName(label: string) {
+  const baseClassName = "border bg-opacity-100"
+
+  switch (label) {
+    case "Codex system":
+      return cn(baseClassName, "border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300")
+    case "Codex local":
+      return cn(baseClassName, "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300")
+    case "Agent shared":
+      return cn(baseClassName, "border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300")
+    case "Plugin cache":
+      return cn(baseClassName, "border-indigo-500/35 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300")
+    case "OpenAI plugin":
+      return cn(baseClassName, "border-violet-500/35 bg-violet-500/10 text-violet-700 dark:text-violet-300")
+    case "Third-party plugin":
+      return cn(baseClassName, "border-fuchsia-500/35 bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300")
+    case "Plugin":
+      return cn(baseClassName, "border-cyan-500/35 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300")
+    case "Codex config":
+      return cn(baseClassName, "border-slate-500/35 bg-slate-500/10 text-slate-700 dark:text-slate-300")
+    default:
+      return cn(baseClassName, "border-border bg-muted text-muted-foreground")
+  }
 }
 
 function EmptyState({ title }: { title: string }) {

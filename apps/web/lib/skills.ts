@@ -724,8 +724,7 @@ function getSkillControlGate(
     relativePath: path.relative(HOME, CODEX_CONFIG_PATH),
     section: "config.toml",
     editable: false,
-    reason: "No exact config gate exists yet; this skill is enabled by default until a staged change writes one.",
-    detailId: encodeDetailId(CODEX_CONFIG_PATH),
+    reason: "No exact [[skills.config]] entry exists yet; this skill is enabled by default until a staged change writes one.",
   }
 }
 
@@ -741,8 +740,7 @@ function getPluginControlGate(pluginKey: string, configEntry?: ConfigGateEntry):
     relativePath: path.relative(HOME, CODEX_CONFIG_PATH),
     section: "config.toml",
     editable: false,
-    reason: "No exact config gate exists yet; this plugin is enabled by default until a staged change writes one.",
-    detailId: encodeDetailId(CODEX_CONFIG_PATH),
+    reason: "No exact [plugins.*] entry exists yet; this plugin is enabled by default until a staged change writes one.",
   }
 }
 
