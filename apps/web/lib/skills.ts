@@ -107,6 +107,7 @@ export type SkillSummary = {
   activePluginCount: number
   standaloneSkillCount: number
   mcpServerCount: number
+  activeMcpServerCount: number
 }
 
 export type SkillDetail = {
@@ -248,6 +249,7 @@ export function getSkillSummary(
     activePluginCount: plugins.filter((plugin) => plugin.enabled).length,
     standaloneSkillCount: standaloneSkills.length,
     mcpServerCount: mcpServers.length,
+    activeMcpServerCount: mcpServers.filter((server) => server.enabled).length,
   }
 }
 
