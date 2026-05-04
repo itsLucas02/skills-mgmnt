@@ -53,6 +53,7 @@ export function applyConfigChanges(changes: ConfigChange[]) {
     (currentText, change) => applyChange(currentText, change),
     configText
   )
+  validateConfigText(nextConfigText)
   writeFileSync(CODEX_CONFIG_PATH, nextConfigText, "utf8")
 
   const appliedAt = new Date().toISOString()
@@ -152,6 +153,31 @@ function applyChange(configText: string, change: ConfigChange) {
   return setSkillEnabled(configText, change.target, change.enabled)
 }
 
+function validateConfigText(configText: string) {
+  const gluedHeaderMatch = /=[ \t]*(true|false)(\[\[?)/.exec(configText)
+
+  if (gluedHeaderMatch) {
+    throw new Error("Refusing to write invalid TOML: a table header is glued to an enabled value.")
+  }
+
+  const seenPluginSections = new Set<string>()
+  const duplicatePluginMatch = configText.matchAll(/^\[plugins\."(.+)"\][ \t]*$/gm)
+
+  for (const match of duplicatePluginMatch) {
+    const pluginKey = match[1]
+
+    if (!pluginKey) {
+      continue
+    }
+
+    if (seenPluginSections.has(pluginKey)) {
+      throw new Error(`Refusing to write invalid TOML: duplicate plugin section ${pluginKey}.`)
+    }
+
+    seenPluginSections.add(pluginKey)
+  }
+}
+
 function getSectionEnabled(configText: string, sectionName: string) {
   const section = findSection(configText, sectionName)
 
@@ -159,45 +185,56 @@ function getSectionEnabled(configText: string, sectionName: string) {
     return null
   }
 
-  const enabledMatch = section.body.match(/^\s*enabled\s*=\s*(true|false)\s*$/m)
+  const enabledMatch = section.body.match(/^[ \t]*enabled[ \t]*=[ \t]*(true|false)[ \t]*$/m)
   return enabledMatch ? enabledMatch[1] === "true" : true
 }
 
 function setSectionEnabled(configText: string, sectionName: string, enabled: boolean) {
-  const section = findSection(configText, sectionName)
+  const dedupedConfigText = removeDuplicateSections(configText, sectionName)
+  const section = findSection(dedupedConfigText, sectionName)
   const enabledLine = `enabled = ${enabled}`
 
   if (!section) {
-    return `${trimTrailing(configText)}\n\n[${sectionName}]\n${enabledLine}\n`
+    return appendTomlBlock(dedupedConfigText, `[${sectionName}]\n${enabledLine}\n`)
   }
 
-  const nextBody = section.body.match(/^\s*enabled\s*=\s*(true|false)\s*$/m)
-    ? section.body.replace(/^\s*enabled\s*=\s*(true|false)\s*$/m, enabledLine)
-    : `${section.body.replace(/\s*$/, "")}\n${enabledLine}\n`
+  const nextBody = setEnabledLine(section.body, enabledLine)
 
-  return `${configText.slice(0, section.bodyStart)}${nextBody}${configText.slice(section.bodyEnd)}`
+  return `${dedupedConfigText.slice(0, section.bodyStart)}${nextBody}${dedupedConfigText.slice(section.bodyEnd)}`
 }
 
 function findSection(configText: string, sectionName: string) {
+  return findSections(configText, sectionName)[0] ?? null
+}
+
+function findSections(configText: string, sectionName: string) {
   const escapedSectionName = escapeRegExp(sectionName)
-  const headerPattern = new RegExp(`^\\[${escapedSectionName}\\]\\s*$`, "m")
-  const headerMatch = headerPattern.exec(configText)
+  const headerPattern = new RegExp(`^\\[${escapedSectionName}\\][ \\t]*$`, "gm")
+  const sections: Array<{
+    headerStart: number
+    bodyStart: number
+    bodyEnd: number
+    blockEnd: number
+    body: string
+  }> = []
+  let headerMatch: RegExpExecArray | null
 
-  if (!headerMatch || headerMatch.index === undefined) {
-    return null
+  while ((headerMatch = headerPattern.exec(configText))) {
+    const headerStart = headerMatch.index
+    const bodyStart = headerStart + headerMatch[0].length + lineEndingLengthAfter(configText, headerMatch.index + headerMatch[0].length)
+    const nextHeaderMatch = /^\[/m.exec(configText.slice(bodyStart))
+    const bodyEnd = nextHeaderMatch ? bodyStart + nextHeaderMatch.index : configText.length
+
+    sections.push({
+      headerStart,
+      bodyStart,
+      bodyEnd,
+      blockEnd: bodyEnd,
+      body: configText.slice(bodyStart, bodyEnd),
+    })
   }
 
-  const headerStart = headerMatch.index
-  const bodyStart = headerStart + headerMatch[0].length + lineEndingLengthAfter(configText, headerMatch.index + headerMatch[0].length)
-  const nextHeaderMatch = /^\[/m.exec(configText.slice(bodyStart))
-  const bodyEnd = nextHeaderMatch ? bodyStart + nextHeaderMatch.index : configText.length
-
-  return {
-    headerStart,
-    bodyStart,
-    bodyEnd,
-    body: configText.slice(bodyStart, bodyEnd),
-  }
+  return sections
 }
 
 function getSkillBlockEnabled(configText: string, skillPath: string) {
@@ -207,29 +244,39 @@ function getSkillBlockEnabled(configText: string, skillPath: string) {
     return null
   }
 
-  const enabledMatch = block.body.match(/^\s*enabled\s*=\s*(true|false)\s*$/m)
+  const enabledMatch = block.body.match(/^[ \t]*enabled[ \t]*=[ \t]*(true|false)[ \t]*$/m)
   return enabledMatch ? enabledMatch[1] === "true" : true
 }
 
 function setSkillEnabled(configText: string, skillPath: string, enabled: boolean) {
-  const block = findSkillBlock(configText, skillPath)
+  const dedupedConfigText = removeDuplicateSkillBlocks(configText, skillPath)
+  const block = findSkillBlock(dedupedConfigText, skillPath)
   const pathLine = `path = ${formatTomlString(skillPath)}`
   const enabledLine = `enabled = ${enabled}`
 
   if (!block) {
-    return `${trimTrailing(configText)}\n\n[[skills.config]]\n${pathLine}\n${enabledLine}\n`
+    return appendTomlBlock(dedupedConfigText, `[[skills.config]]\n${pathLine}\n${enabledLine}\n`)
   }
 
-  const nextBodyWithEnabled = block.body.match(/^\s*enabled\s*=\s*(true|false)\s*$/m)
-    ? block.body.replace(/^\s*enabled\s*=\s*(true|false)\s*$/m, enabledLine)
-    : `${block.body.replace(/\s*$/, "")}\n${enabledLine}\n`
+  const nextBodyWithEnabled = setEnabledLine(block.body, enabledLine)
 
-  return `${configText.slice(0, block.bodyStart)}${nextBodyWithEnabled}${configText.slice(block.bodyEnd)}`
+  return `${dedupedConfigText.slice(0, block.bodyStart)}${nextBodyWithEnabled}${dedupedConfigText.slice(block.bodyEnd)}`
 }
 
 function findSkillBlock(configText: string, skillPath: string) {
+  return findSkillBlocks(configText, skillPath)[0] ?? null
+}
+
+function findSkillBlocks(configText: string, skillPath: string) {
   const blockPattern = /^\[\[skills\.config\]\]\s*$/gm
   let match: RegExpExecArray | null
+  const blocks: Array<{
+    headerStart: number
+    bodyStart: number
+    bodyEnd: number
+    blockEnd: number
+    body: string
+  }> = []
 
   while ((match = blockPattern.exec(configText))) {
     const headerStart = match.index
@@ -240,16 +287,68 @@ function findSkillBlock(configText: string, skillPath: string) {
     const pathMatch = body.match(/^\s*path\s*=\s*(.+)\s*$/m)
 
     if (pathMatch && parseTomlString(pathMatch[1] ?? "") === skillPath) {
-      return {
+      blocks.push({
         headerStart,
         bodyStart,
         bodyEnd,
+        blockEnd: bodyEnd,
         body,
-      }
+      })
     }
   }
 
-  return null
+  return blocks
+}
+
+function setEnabledLine(body: string, enabledLine: string) {
+  const enabledPattern = /^[ \t]*enabled[ \t]*=[ \t]*(true|false)[ \t]*$/m
+  const nextBody = enabledPattern.test(body)
+    ? body.replace(enabledPattern, enabledLine)
+    : `${body.replace(/[ \t\r\n]*$/, "")}\n${enabledLine}`
+
+  return `${nextBody.replace(/[ \t\r\n]*$/, "")}\n\n`
+}
+
+function removeDuplicateSections(configText: string, sectionName: string) {
+  const sections = findSections(configText, sectionName)
+
+  if (sections.length <= 1) {
+    return configText
+  }
+
+  return removeRanges(
+    configText,
+    sections.slice(1).map((section) => ({
+      start: section.headerStart,
+      end: section.blockEnd,
+    }))
+  )
+}
+
+function removeDuplicateSkillBlocks(configText: string, skillPath: string) {
+  const blocks = findSkillBlocks(configText, skillPath)
+
+  if (blocks.length <= 1) {
+    return configText
+  }
+
+  return removeRanges(
+    configText,
+    blocks.slice(1).map((block) => ({
+      start: block.headerStart,
+      end: block.blockEnd,
+    }))
+  )
+}
+
+function removeRanges(text: string, ranges: Array<{ start: number; end: number }>) {
+  return ranges
+    .sort((left, right) => right.start - left.start)
+    .reduce((currentText, range) => {
+      const before = currentText.slice(0, range.start).replace(/[ \t]*$/, "")
+      const after = currentText.slice(range.end).replace(/^[ \t\r\n]*/, "")
+      return `${before}\n\n${after}`
+    }, text)
 }
 
 function parseTomlString(value: string) {
@@ -304,6 +403,10 @@ function lineEndingLengthAfter(text: string, index: number) {
 
 function trimTrailing(value: string) {
   return value.replace(/\s*$/, "")
+}
+
+function appendTomlBlock(configText: string, blockText: string) {
+  return `${trimTrailing(configText)}\n\n${blockText.replace(/[ \t\r\n]*$/, "")}\n`
 }
 
 function escapeRegExp(value: string) {
