@@ -518,10 +518,11 @@ function SummaryGrid({ summary }: { summary: SkillSummary }) {
   const activePercent = summary.total ? Math.round((summary.active / summary.total) * 100) : 0
 
   return (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
       <SummaryCard title="Plugins" value={`${summary.activePluginCount}/${summary.pluginCount}`} description="Enabled plugin bundles" />
       <SummaryCard title="Standalone" value={summary.standaloneSkillCount.toString()} description="Local direct skills" />
       <SummaryCard title="MCP servers" value={summary.mcpServerCount.toString()} description="Config and plugin servers" />
+      <SummaryCard title="Installed skills" value={summary.total.toString()} description="Enabled and disabled skills" />
       <SummaryCard title="Active skills" value={summary.active.toString()} description={`${activePercent}% enabled effectively`} />
     </div>
   )
