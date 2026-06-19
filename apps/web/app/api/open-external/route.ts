@@ -3,7 +3,7 @@ import { promisify } from "node:util"
 import { NextResponse } from "next/server"
 
 import { isLocalRequest } from "@/lib/local-request"
-import { getExplorerSelectArgs, getTargetLine } from "@/lib/open-external"
+import { getOpenCommandCandidates, getTargetLine } from "@/lib/open-external"
 import { getOpenableTarget } from "@/lib/skills"
 
 const execFileAsync = promisify(execFile)
@@ -30,32 +30,28 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Open target is outside the allowed local roots." }, { status: 403 })
   }
 
-  try {
-    const line = getTargetLine(target.line)
-    await execFileAsync("cmd.exe", ["/c", "antigravity.cmd", "--reuse-window", "--goto", `${target.path}:${line}`], {
-      windowsHide: true,
-    })
-    return NextResponse.json({ ok: true, openedWith: "Antigravity", path: target.path, line })
-  } catch (antigravityError) {
+  const line = getTargetLine(target.line)
+  const failures: string[] = []
+
+  for (const candidate of getOpenCommandCandidates(target.path, line)) {
     try {
-      execFile("explorer.exe", getExplorerSelectArgs(target.path), { windowsHide: true }, () => undefined)
+      await execFileAsync(candidate.command, candidate.args, { windowsHide: true })
       return NextResponse.json({
         ok: true,
-        openedWith: "Windows Explorer",
+        openedWith: candidate.name,
         path: target.path,
-        line: getTargetLine(target.line),
-        note: antigravityError instanceof Error ? antigravityError.message : "Antigravity failed",
+        line,
       })
-    } catch (explorerError) {
-      return NextResponse.json(
-        {
-          error: "Could not open target in Antigravity or Windows Explorer.",
-          details: `${antigravityError instanceof Error ? antigravityError.message : "Antigravity failed"}; ${
-            explorerError instanceof Error ? explorerError.message : "Explorer failed"
-          }`,
-        },
-        { status: 500 }
-      )
+    } catch (error) {
+      failures.push(`${candidate.name}: ${error instanceof Error ? error.message : "failed"}`)
     }
   }
+
+  return NextResponse.json(
+    {
+      error: "Could not open target in Antigravity, VS Code, Cursor, or Windows Explorer.",
+      details: failures.join("\n"),
+    },
+    { status: 500 }
+  )
 }
