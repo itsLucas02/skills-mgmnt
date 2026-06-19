@@ -36,6 +36,7 @@ import type {
   SkillDetail,
   SkillSummary,
 } from "@/lib/skills"
+import { getCompactPathLabel } from "@/lib/path-display"
 import { Alert, AlertDescription, AlertTitle } from "@workspace/ui/components/alert"
 import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
@@ -718,20 +719,20 @@ function SkillTable({
 
   return (
     <div className={compact ? "overflow-hidden rounded-lg border" : "max-h-[44rem] overflow-y-auto rounded-lg border"}>
-      <Table>
+      <Table className="table-fixed">
         <TableHeader className="sticky top-0 z-10 bg-card">
           <TableRow>
-            <TableHead>Skill</TableHead>
-            {showParent ? <TableHead>Parent</TableHead> : null}
-            <TableHead>Status</TableHead>
+            <TableHead className={showParent ? "w-[28%]" : "w-[34%]"}>Skill</TableHead>
+            {showParent ? <TableHead className="w-[14%]">Parent</TableHead> : null}
+            <TableHead className="w-44">Status</TableHead>
             <TableHead>Path</TableHead>
-            <TableHead>Actions</TableHead>
+            <TableHead className="w-44 text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {skills.map((skill) => (
             <TableRow key={skill.id}>
-              <TableCell className="min-w-64 whitespace-normal">
+              <TableCell className="min-w-0 whitespace-normal">
                 <div className="flex flex-col gap-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium">{skill.name}</span>
@@ -753,14 +754,18 @@ function SkillTable({
                   onStageChange={onStageChange}
                 />
               </TableCell>
-              <TableCell className="max-w-72 font-mono text-xs text-muted-foreground">
-                <div className="flex flex-col gap-1">
-                  <span className="break-all" title={skill.relativePath}>{skill.relativePath}</span>
+              <TableCell className="min-w-0 overflow-hidden font-mono text-xs text-muted-foreground">
+                <div className="flex min-w-0 flex-col gap-1">
+                  <span className="truncate" title={skill.relativePath} aria-label={skill.relativePath}>
+                    {getCompactPathLabel(skill.relativePath)}
+                  </span>
                   <span className="truncate font-sans text-[0.7rem]">{getSkillStatusReason(skill, parentPluginEnabled)}</span>
-                  <span className="break-all font-sans text-[0.7rem]">{formatControlGateLabel(skill.controlGate)}</span>
+                  <span className="truncate font-sans text-[0.7rem]" title={formatControlGateLabel(skill.controlGate)}>
+                    {formatControlGateLabel(skill.controlGate)}
+                  </span>
                 </div>
               </TableCell>
-              <TableCell>
+              <TableCell className="text-right">
                 <ActionButtons
                   detailId={skill.detailId}
                   deleteLabel={`Delete ${skill.name}`}
@@ -942,7 +947,7 @@ function ActionButtons({
   canOpen?: boolean
 }) {
   return (
-    <div className="flex gap-2">
+    <div className="flex justify-end gap-2">
       <TooltipIconButton label="View details">
         <Button variant="outline" size="icon-sm" aria-label="View details" onClick={() => onDetails(detailId)}>
           <EyeIcon />
