@@ -3,6 +3,7 @@ import { promisify } from "node:util"
 import { NextResponse } from "next/server"
 
 import { isLocalRequest } from "@/lib/local-request"
+import { getExplorerSelectArgs, getTargetLine } from "@/lib/open-external"
 import { getOpenableTarget } from "@/lib/skills"
 
 const execFileAsync = promisify(execFile)
@@ -30,14 +31,21 @@ export async function POST(request: Request) {
   }
 
   try {
-    await execFileAsync("cmd.exe", ["/c", "antigravity.cmd", "--reuse-window", "--goto", `${target.path}:${target.line}`], {
+    const line = getTargetLine(target.line)
+    await execFileAsync("cmd.exe", ["/c", "antigravity.cmd", "--reuse-window", "--goto", `${target.path}:${line}`], {
       windowsHide: true,
     })
-    return NextResponse.json({ ok: true, openedWith: "Antigravity", path: target.path, line: target.line })
+    return NextResponse.json({ ok: true, openedWith: "Antigravity", path: target.path, line })
   } catch (antigravityError) {
     try {
-      await execFileAsync("explorer.exe", [`/select,${target.path}`], { windowsHide: true })
-      return NextResponse.json({ ok: true, openedWith: "Windows Explorer", path: target.path, line: target.line })
+      execFile("explorer.exe", getExplorerSelectArgs(target.path), { windowsHide: true }, () => undefined)
+      return NextResponse.json({
+        ok: true,
+        openedWith: "Windows Explorer",
+        path: target.path,
+        line: getTargetLine(target.line),
+        note: antigravityError instanceof Error ? antigravityError.message : "Antigravity failed",
+      })
     } catch (explorerError) {
       return NextResponse.json(
         {

@@ -753,11 +753,11 @@ function SkillTable({
                   onStageChange={onStageChange}
                 />
               </TableCell>
-              <TableCell className="max-w-72 truncate font-mono text-xs text-muted-foreground">
+              <TableCell className="max-w-72 font-mono text-xs text-muted-foreground">
                 <div className="flex flex-col gap-1">
-                  <span className="truncate">{skill.relativePath}</span>
+                  <span className="break-all" title={skill.relativePath}>{skill.relativePath}</span>
                   <span className="truncate font-sans text-[0.7rem]">{getSkillStatusReason(skill, parentPluginEnabled)}</span>
-                  <span className="truncate font-sans text-[0.7rem]">{formatControlGateLabel(skill.controlGate)}</span>
+                  <span className="break-all font-sans text-[0.7rem]">{formatControlGateLabel(skill.controlGate)}</span>
                 </div>
               </TableCell>
               <TableCell>
@@ -1087,7 +1087,7 @@ function Sidebar({
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {summary.scannedRoots.map((root) => (
-            <code key={root} className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
+            <code key={root} className="block rounded-md bg-muted px-2 py-1 text-xs break-all text-muted-foreground">
               {root}
             </code>
           ))}
@@ -1205,7 +1205,7 @@ function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0 rounded-lg border bg-muted/30 px-3 py-2">
       <div className="text-xs font-medium text-muted-foreground">{label}</div>
-      <div className="truncate text-sm">{value}</div>
+      <div className="break-all text-sm" title={value}>{value}</div>
     </div>
   )
 }

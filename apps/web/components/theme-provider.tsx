@@ -3,6 +3,8 @@
 import * as React from "react"
 import { ThemeProvider as NextThemesProvider, useTheme } from "next-themes"
 
+import { shouldToggleThemeForKey } from "@/lib/theme-hotkey"
+
 function ThemeProvider({
   children,
   ...props
@@ -47,7 +49,7 @@ function ThemeHotkey() {
         return
       }
 
-      if (event.key.toLowerCase() !== "d") {
+      if (!shouldToggleThemeForKey(event)) {
         return
       }
 
