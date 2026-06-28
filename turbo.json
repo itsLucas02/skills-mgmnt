@@ -1,7 +1,7 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "ui": "tui",
-  "globalEnv": ["CODEX_HOME", "AGENTS_HOME"],
+  "globalEnv": ["CODEX_HOME", "AGENTS_HOME", "SKILLPULSE_BASE_URL", "SKILLPULSE_INTERVAL_MS"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

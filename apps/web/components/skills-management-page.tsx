@@ -5,9 +5,11 @@ import { useEffect, useMemo, useState } from "react"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
 import {
+  ActivityIcon,
   CheckCircle2Icon,
   ChevronDownIcon,
   ChevronRightIcon,
+  ClockIcon,
   ExternalLinkIcon,
   FileCogIcon,
   EyeIcon,
@@ -15,16 +17,19 @@ import {
   InfoIcon,
   PackageIcon,
   PauseCircleIcon,
+  PlayIcon,
   RefreshCwIcon,
   RotateCcwIcon,
   SaveIcon,
   SearchIcon,
   ShieldAlertIcon,
+  SquareIcon,
   Trash2Icon,
   XIcon,
 } from "lucide-react"
 
 import type { ConfigChange, ConfigChangePreview } from "@/lib/config-editor"
+import type { SkillPulseSummaryResponse, SkillPulseSyncResult } from "@/lib/skillpulse"
 import type {
   CapabilityOrigin,
   ControlGate,
@@ -84,7 +89,7 @@ type CapabilityInventory = {
   summary: SkillSummary
 }
 
-type MainTab = "plugins" | "standalone" | "mcp" | "raw"
+type MainTab = "plugins" | "standalone" | "mcp" | "skillpulse" | "raw"
 
 type ApplyState = {
   lastAppliedAt?: string
@@ -103,6 +108,7 @@ const mainTabs = [
   { value: "plugins", label: "Plugins" },
   { value: "standalone", label: "Standalone Skills" },
   { value: "mcp", label: "MCP Servers" },
+  { value: "skillpulse", label: "SkillPulse" },
   { value: "raw", label: "Raw Inventory" },
 ] satisfies Array<{ value: MainTab; label: string }>
 
@@ -127,6 +133,11 @@ export function SkillsManagementPage({
   const [applyOpen, setApplyOpen] = useState(false)
   const [applying, setApplying] = useState(false)
   const [lastApplyResult, setLastApplyResult] = useState<ApplyResult | null>(null)
+  const [skillPulseSummary, setSkillPulseSummary] = useState<SkillPulseSummaryResponse | null>(null)
+  const [skillPulseLoading, setSkillPulseLoading] = useState(false)
+  const [skillPulseSyncing, setSkillPulseSyncing] = useState<"incremental" | "backfill-all" | null>(null)
+  const [collectorAction, setCollectorAction] = useState<"start" | "stop" | null>(null)
+  const [lastSkillPulseSync, setLastSkillPulseSync] = useState<SkillPulseSyncResult | null>(null)
 
   const normalizedQuery = query.trim().toLowerCase()
   const stagedList = useMemo(() => Object.values(stagedChanges), [stagedChanges])
@@ -151,6 +162,10 @@ export function SkillsManagementPage({
     }
 
     void loadApplyState()
+  }, [])
+
+  useEffect(() => {
+    void loadSkillPulseSummary()
   }, [])
 
   const filteredPlugins = useMemo(
@@ -321,6 +336,57 @@ export function SkillsManagementPage({
     }
   }
 
+  async function loadSkillPulseSummary() {
+    setSkillPulseLoading(true)
+    const response = await fetch("/api/skillpulse/summary")
+    setSkillPulseLoading(false)
+
+    if (!response.ok) {
+      return
+    }
+
+    setSkillPulseSummary((await response.json()) as SkillPulseSummaryResponse)
+  }
+
+  async function syncSkillPulse(mode: "incremental" | "backfill-all") {
+    setSkillPulseSyncing(mode)
+    setNotice("")
+
+    const response = await fetch("/api/skillpulse/sync", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode }),
+    })
+    const payload = await response.json()
+    setSkillPulseSyncing(null)
+
+    if (!response.ok) {
+      setNotice(payload.error ?? "Could not sync SkillPulse usage.")
+      return
+    }
+
+    setLastSkillPulseSync(payload as SkillPulseSyncResult)
+    setNotice(`SkillPulse synced ${payload.newEventCount} new skill-load event${payload.newEventCount === 1 ? "" : "s"}.`)
+    await loadSkillPulseSummary()
+  }
+
+  async function setSkillPulseCollector(action: "start" | "stop") {
+    setCollectorAction(action)
+    setNotice("")
+
+    const response = await fetch(`/api/skillpulse/collector/${action}`, { method: "POST" })
+    const payload = await response.json()
+    setCollectorAction(null)
+
+    if (!response.ok) {
+      setNotice(payload.error ?? `Could not ${action} SkillPulse collector.`)
+      return
+    }
+
+    setNotice(action === "start" ? "SkillPulse collector started." : "SkillPulse collector stopped.")
+    await loadSkillPulseSummary()
+  }
+
   return (
     <TooltipProvider>
       <main className="min-h-svh bg-background text-foreground">
@@ -439,6 +505,19 @@ export function SkillsManagementPage({
                     onDetails={showDetails}
                     onOpenExternal={openExternal}
                     onOpenConfigGate={openConfigGate}
+                  />
+                </TabsContent>
+
+                <TabsContent value="skillpulse">
+                  <SkillPulsePanel
+                    summary={skillPulseSummary}
+                    loading={skillPulseLoading}
+                    syncing={skillPulseSyncing}
+                    collectorAction={collectorAction}
+                    lastSync={lastSkillPulseSync}
+                    onRefresh={loadSkillPulseSummary}
+                    onSync={syncSkillPulse}
+                    onCollectorAction={setSkillPulseCollector}
                   />
                 </TabsContent>
 
@@ -928,6 +1007,176 @@ function McpTable({
   )
 }
 
+function SkillPulsePanel({
+  summary,
+  loading,
+  syncing,
+  collectorAction,
+  lastSync,
+  onRefresh,
+  onSync,
+  onCollectorAction,
+}: {
+  summary: SkillPulseSummaryResponse | null
+  loading: boolean
+  syncing: "incremental" | "backfill-all" | null
+  collectorAction: "start" | "stop" | null
+  lastSync: SkillPulseSyncResult | null
+  onRefresh: () => void
+  onSync: (mode: "incremental" | "backfill-all") => void
+  onCollectorAction: (action: "start" | "stop") => void
+}) {
+  const collectorRunning = Boolean(summary?.status.collectorRunning)
+  const topSkills = summary?.skills ?? []
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-3">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 flex-col gap-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <ActivityIcon className="text-muted-foreground" />
+              <span className="font-medium">SkillPulse usage tracking</span>
+              <StatusBadge active={collectorRunning} label={collectorRunning ? "Collector running" : "Collector stopped"} />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Tracks skill-load events from local Codex session logs. It recommends candidates; it never disables skills automatically.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" disabled={loading} onClick={onRefresh}>
+              <RefreshCwIcon data-icon="inline-start" />
+              Refresh
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={Boolean(syncing)}
+              onClick={() => onSync("incremental")}
+            >
+              <RefreshCwIcon data-icon="inline-start" />
+              {syncing === "incremental" ? "Syncing" : "Sync now"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={Boolean(syncing)}
+              onClick={() => onSync("backfill-all")}
+            >
+              <ClockIcon data-icon="inline-start" />
+              {syncing === "backfill-all" ? "Backfilling" : "Backfill all"}
+            </Button>
+            {collectorRunning ? (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={collectorAction === "stop"}
+                onClick={() => onCollectorAction("stop")}
+              >
+                <SquareIcon data-icon="inline-start" />
+                {collectorAction === "stop" ? "Stopping" : "Stop collector"}
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                disabled={collectorAction === "start"}
+                onClick={() => onCollectorAction("start")}
+              >
+                <PlayIcon data-icon="inline-start" />
+                {collectorAction === "start" ? "Starting" : "Start collector"}
+              </Button>
+            )}
+          </div>
+        </div>
+        {lastSync ? (
+          <div className="rounded-md bg-background px-2 py-1 text-xs text-muted-foreground">
+            Last sync scanned {lastSync.processedFileCount} session file{lastSync.processedFileCount === 1 ? "" : "s"} and found {lastSync.newEventCount} new event{lastSync.newEventCount === 1 ? "" : "s"}.
+          </div>
+        ) : null}
+      </div>
+
+      {summary ? (
+        <>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <SummaryCard title="Skill loads" value={summary.totals.totalEvents.toString()} description="All tracked load events" />
+            <SummaryCard title="Loaded skills" value={summary.totals.loadedSkillCount.toString()} description="Skills seen in logs" />
+            <SummaryCard title="Disable candidates" value={summary.totals.disableCandidateCount.toString()} description="Active and unused in 7 days" />
+            <SummaryCard title="Coverage" value={`${summary.status.dataCoverageDays}d`} description="Tracked usage window" />
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <Metric label="Last sync" value={summary.status.lastSyncAt ? formatDateTime(summary.status.lastSyncAt) : "Not synced yet"} />
+            <Metric label="Last skill load" value={summary.status.lastEventAt ? formatDateTime(summary.status.lastEventAt) : "No events tracked yet"} />
+          </div>
+          <SkillPulseTable skills={topSkills} />
+        </>
+      ) : (
+        <EmptyState title={loading ? "Loading SkillPulse usage" : "No SkillPulse data loaded"} />
+      )}
+    </div>
+  )
+}
+
+function SkillPulseTable({
+  skills,
+}: {
+  skills: SkillPulseSummaryResponse["skills"]
+}) {
+  if (!skills.length) {
+    return <EmptyState title="No skills are available for SkillPulse reporting" />
+  }
+
+  return (
+    <div className="max-h-[44rem] overflow-y-auto rounded-lg border">
+      <Table>
+        <TableHeader className="sticky top-0 z-10 bg-card">
+          <TableRow>
+            <TableHead>Skill</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>7 days</TableHead>
+            <TableHead>30 days</TableHead>
+            <TableHead>All time</TableHead>
+            <TableHead>Last loaded</TableHead>
+            <TableHead>Recommendation</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {skills.map((skill) => (
+            <TableRow key={skill.skillPath}>
+              <TableCell>
+                <div className="flex min-w-0 flex-col gap-1">
+                  <span className="font-medium">{skill.skillName}</span>
+                  <span className="max-w-72 truncate font-mono text-xs text-muted-foreground">
+                    {getCompactPathLabel(skill.skillPath)}
+                  </span>
+                  {skill.parentPluginKey ? (
+                    <span className="text-xs text-muted-foreground">{skill.parentPluginKey}</span>
+                  ) : null}
+                </div>
+              </TableCell>
+              <TableCell>
+                <Badge variant={skill.effectiveStatus === "active" ? "secondary" : "outline"}>
+                  {formatSkillPulseStatus(skill.effectiveStatus)}
+                </Badge>
+              </TableCell>
+              <TableCell className="tabular-nums">{skill.loads7d}</TableCell>
+              <TableCell className="tabular-nums">{skill.loads30d}</TableCell>
+              <TableCell className="tabular-nums">{skill.loadsAllTime}</TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {skill.lastLoadedAt ? formatDateTime(skill.lastLoadedAt) : "Never"}
+              </TableCell>
+              <TableCell>
+                <Badge variant={skill.recommendation === "disable-candidate" ? "destructive" : "outline"}>
+                  {formatSkillPulseRecommendation(skill.recommendation)}
+                </Badge>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  )
+}
+
 function ActionButtons({
   detailId,
   deleteLabel,
@@ -1320,6 +1569,27 @@ function formatControlGateLabel(gate: ControlGate) {
 
 function formatDateTime(value: string) {
   return new Date(value).toLocaleString()
+}
+
+function formatSkillPulseStatus(status: SkillPulseSummaryResponse["skills"][number]["effectiveStatus"]) {
+  const labels: Record<SkillPulseSummaryResponse["skills"][number]["effectiveStatus"], string> = {
+    active: "Active",
+    "disabled-by-plugin": "Plugin disabled",
+    "disabled-by-skill": "Skill disabled",
+    "installed-not-loaded": "Not loaded",
+  }
+  return labels[status]
+}
+
+function formatSkillPulseRecommendation(
+  recommendation: SkillPulseSummaryResponse["skills"][number]["recommendation"]
+) {
+  const labels: Record<SkillPulseSummaryResponse["skills"][number]["recommendation"], string> = {
+    keep: "Keep",
+    "disable-candidate": "Disable candidate",
+    "insufficient-data": "Insufficient data",
+  }
+  return labels[recommendation]
 }
 
 function readCollapsedPlugins() {
