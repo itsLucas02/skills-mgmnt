@@ -5,7 +5,6 @@ import { useEffect, useMemo, useState } from "react"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
 import {
-  ArchiveIcon,
   CheckCircle2Icon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -15,7 +14,6 @@ import {
   FolderSearchIcon,
   InfoIcon,
   PackageIcon,
-  PackagePlusIcon,
   PauseCircleIcon,
   RefreshCwIcon,
   RotateCcwIcon,
@@ -109,6 +107,7 @@ const mainTabs = [
 ] satisfies Array<{ value: MainTab; label: string }>
 
 const COLLAPSED_PLUGINS_KEY = "skills-mgmnt-collapsed-plugins"
+const ACTIVE_TAB_KEY = "skills-mgmnt-active-tab"
 
 export function SkillsManagementPage({
   inventory,
@@ -135,6 +134,7 @@ export function SkillsManagementPage({
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
       setCollapsedPlugins(readCollapsedPlugins())
+      setTab(readActiveTab())
     }, 0)
 
     return () => window.clearTimeout(timeoutId)
@@ -197,6 +197,15 @@ export function SkillsManagementPage({
     saveCollapsedState(
       Object.fromEntries(inventory.plugins.map((plugin) => [plugin.key, collapsed]))
     )
+  }
+
+  function selectTab(value: string) {
+    if (!isMainTab(value)) {
+      return
+    }
+
+    setTab(value)
+    saveActiveTab(value)
   }
 
   function stageChange(change: ConfigChange, currentEnabled: boolean) {
@@ -387,7 +396,7 @@ export function SkillsManagementPage({
                 </div>
               </div>
 
-              <Tabs value={tab} onValueChange={(value) => setTab(value as MainTab)}>
+              <Tabs value={tab} onValueChange={selectTab}>
                 <TabsList>
                   {mainTabs.map((item) => (
                     <TabsTrigger key={item.value} value={item.value}>
@@ -489,7 +498,7 @@ export function SkillsManagementPage({
 
 function PageHeader() {
   return (
-    <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <header className="flex flex-col gap-4">
       <div className="flex max-w-3xl flex-col gap-2">
         <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
           <Image
@@ -508,16 +517,6 @@ function PageHeader() {
         <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
           Inspect and stage local Codex plugin, skill, and MCP enablement changes from one dashboard.
         </p>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Button variant="outline" disabled>
-          <ArchiveIcon data-icon="inline-start" />
-          Export inventory
-        </Button>
-        <Button disabled>
-          <PackagePlusIcon data-icon="inline-start" />
-          Install skill
-        </Button>
       </div>
     </header>
   )
@@ -1338,4 +1337,25 @@ function readCollapsedPlugins() {
   } catch {
     return {}
   }
+}
+
+function saveActiveTab(value: string) {
+  if (!isMainTab(value)) {
+    return
+  }
+
+  window.localStorage.setItem(ACTIVE_TAB_KEY, value)
+}
+
+function readActiveTab(): MainTab {
+  if (typeof window === "undefined") {
+    return "plugins"
+  }
+
+  const value = window.localStorage.getItem(ACTIVE_TAB_KEY)
+  return isMainTab(value) ? value : "plugins"
+}
+
+function isMainTab(value: string | null): value is MainTab {
+  return mainTabs.some((item) => item.value === value)
 }
