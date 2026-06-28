@@ -195,6 +195,10 @@ export function SkillsManagementPage({
       }),
     [inventory.mcpServers, normalizedQuery]
   )
+  const skillByUsagePath = useMemo(
+    () => new Map(inventory.skills.map((skill) => [getSkillPulsePathKey(skill.path), skill])),
+    [inventory.skills]
+  )
 
   function saveCollapsedState(nextState: Record<string, boolean>) {
     setCollapsedPlugins(nextState)
@@ -515,9 +519,12 @@ export function SkillsManagementPage({
                     syncing={skillPulseSyncing}
                     collectorAction={collectorAction}
                     lastSync={lastSkillPulseSync}
+                    skillByUsagePath={skillByUsagePath}
+                    getSkillEnabled={getSkillEnabled}
                     onRefresh={loadSkillPulseSummary}
                     onSync={syncSkillPulse}
                     onCollectorAction={setSkillPulseCollector}
+                    onStageChange={stageChange}
                   />
                 </TabsContent>
 
@@ -1013,18 +1020,24 @@ function SkillPulsePanel({
   syncing,
   collectorAction,
   lastSync,
+  skillByUsagePath,
+  getSkillEnabled,
   onRefresh,
   onSync,
   onCollectorAction,
+  onStageChange,
 }: {
   summary: SkillPulseSummaryResponse | null
   loading: boolean
   syncing: "incremental" | "backfill-all" | null
   collectorAction: "start" | "stop" | null
   lastSync: SkillPulseSyncResult | null
+  skillByUsagePath: Map<string, ManagedSkill>
+  getSkillEnabled: (skill: ManagedSkill) => boolean
   onRefresh: () => void
   onSync: (mode: "incremental" | "backfill-all") => void
   onCollectorAction: (action: "start" | "stop") => void
+  onStageChange: (change: ConfigChange, currentEnabled: boolean) => void
 }) {
   const collectorRunning = Boolean(summary?.status.collectorRunning)
   const topSkills = summary?.skills ?? []
@@ -1107,7 +1120,12 @@ function SkillPulsePanel({
             <Metric label="Last sync" value={summary.status.lastSyncAt ? formatDateTime(summary.status.lastSyncAt) : "Not synced yet"} />
             <Metric label="Last skill load" value={summary.status.lastEventAt ? formatDateTime(summary.status.lastEventAt) : "No events tracked yet"} />
           </div>
-          <SkillPulseTable skills={topSkills} />
+          <SkillPulseTable
+            skills={topSkills}
+            skillByUsagePath={skillByUsagePath}
+            getSkillEnabled={getSkillEnabled}
+            onStageChange={onStageChange}
+          />
         </>
       ) : (
         <EmptyState title={loading ? "Loading SkillPulse usage" : "No SkillPulse data loaded"} />
@@ -1118,8 +1136,14 @@ function SkillPulsePanel({
 
 function SkillPulseTable({
   skills,
+  skillByUsagePath,
+  getSkillEnabled,
+  onStageChange,
 }: {
   skills: SkillPulseSummaryResponse["skills"]
+  skillByUsagePath: Map<string, ManagedSkill>
+  getSkillEnabled: (skill: ManagedSkill) => boolean
+  onStageChange: (change: ConfigChange, currentEnabled: boolean) => void
 }) {
   if (!skills.length) {
     return <EmptyState title="No skills are available for SkillPulse reporting" />
@@ -1127,69 +1151,137 @@ function SkillPulseTable({
 
   return (
     <div className="max-h-[44rem] overflow-auto rounded-lg border">
-      <table className="w-full min-w-[64rem] table-fixed caption-bottom text-sm 2xl:min-w-0">
+      <table className="w-full min-w-[64rem] table-fixed caption-bottom text-sm xl:min-w-0">
         <thead className="[&_tr]:border-b">
           <tr className="border-b">
-            <th className="sticky top-0 z-20 h-10 w-[34%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+            <th className="sticky top-0 z-20 h-10 w-[30%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
               Skill
             </th>
-            <th className="sticky top-0 z-20 h-10 w-[14%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+            <th className="sticky top-0 z-20 h-10 w-[12%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
               Status
             </th>
-            <th className="sticky top-0 z-20 h-10 w-[8%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+            <th className="sticky top-0 z-20 h-10 w-[7%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
               7 days
             </th>
-            <th className="sticky top-0 z-20 h-10 w-[8%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+            <th className="sticky top-0 z-20 h-10 w-[7%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
               30 days
             </th>
-            <th className="sticky top-0 z-20 h-10 w-[8%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+            <th className="sticky top-0 z-20 h-10 w-[7%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
               All time
             </th>
-            <th className="sticky top-0 z-20 h-10 w-[16%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+            <th className="sticky top-0 z-20 h-10 w-[15%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
               Last loaded
             </th>
-            <th className="sticky top-0 z-20 h-10 w-[12%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+            <th className="sticky top-0 z-20 h-10 w-[22%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
               Action
             </th>
           </tr>
         </thead>
         <tbody className="[&_tr:last-child]:border-0">
-          {skills.map((skill) => (
-            <tr
-              key={skill.skillPath}
-              className="border-b transition-colors hover:bg-muted/50"
-            >
-              <td className="p-2 align-middle">
-                <div className="flex min-w-0 flex-col gap-1">
-                  <span className="truncate font-medium">{skill.skillName}</span>
-                  <span className="truncate font-mono text-xs text-muted-foreground">
-                    {getCompactPathLabel(skill.skillPath)}
-                  </span>
-                  {skill.parentPluginKey ? (
-                    <span className="truncate text-xs text-muted-foreground">{skill.parentPluginKey}</span>
-                  ) : null}
-                </div>
-              </td>
-              <td className="p-2 align-middle">
-                <Badge variant={skill.effectiveStatus === "active" ? "secondary" : "outline"}>
-                  {formatSkillPulseStatus(skill.effectiveStatus)}
-                </Badge>
-              </td>
-              <td className="p-2 align-middle tabular-nums">{skill.loads7d}</td>
-              <td className="p-2 align-middle tabular-nums">{skill.loads30d}</td>
-              <td className="p-2 align-middle tabular-nums">{skill.loadsAllTime}</td>
-              <td className="p-2 align-middle text-sm text-muted-foreground">
-                {skill.lastLoadedAt ? formatDateTime(skill.lastLoadedAt) : "Never"}
-              </td>
-              <td className="p-2 align-middle">
-                <Badge variant={skill.recommendation === "disable-candidate" ? "destructive" : "outline"}>
-                  {formatSkillPulseRecommendation(skill.recommendation)}
-                </Badge>
-              </td>
-            </tr>
-          ))}
+          {skills.map((skill) => {
+            const managedSkill = skillByUsagePath.get(getSkillPulsePathKey(skill.skillPath))
+
+            return (
+              <tr
+                key={skill.skillPath}
+                className="border-b transition-colors hover:bg-muted/50"
+              >
+                <td className="p-2 align-middle">
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <span className="truncate font-medium">{skill.skillName}</span>
+                    <span className="truncate font-mono text-xs text-muted-foreground">
+                      {getCompactPathLabel(skill.skillPath)}
+                    </span>
+                    {skill.parentPluginKey ? (
+                      <span className="truncate text-xs text-muted-foreground">{skill.parentPluginKey}</span>
+                    ) : null}
+                  </div>
+                </td>
+                <td className="p-2 align-middle">
+                  <Badge variant={skill.effectiveStatus === "active" ? "secondary" : "outline"}>
+                    {formatSkillPulseStatus(skill.effectiveStatus)}
+                  </Badge>
+                </td>
+                <td className="p-2 align-middle tabular-nums">{skill.loads7d}</td>
+                <td className="p-2 align-middle tabular-nums">{skill.loads30d}</td>
+                <td className="p-2 align-middle tabular-nums">{skill.loadsAllTime}</td>
+                <td className="p-2 align-middle text-sm text-muted-foreground">
+                  {skill.lastLoadedAt ? formatDateTime(skill.lastLoadedAt) : "Never"}
+                </td>
+                <td className="p-2 align-middle">
+                  <SkillPulseActionControl
+                    usage={skill}
+                    skill={managedSkill}
+                    getSkillEnabled={getSkillEnabled}
+                    onStageChange={onStageChange}
+                  />
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+function SkillPulseActionControl({
+  usage,
+  skill,
+  getSkillEnabled,
+  onStageChange,
+}: {
+  usage: SkillPulseSummaryResponse["skills"][number]
+  skill?: ManagedSkill
+  getSkillEnabled: (skill: ManagedSkill) => boolean
+  onStageChange: (change: ConfigChange, currentEnabled: boolean) => void
+}) {
+  const recommendation = (
+    <Badge variant={usage.recommendation === "disable-candidate" ? "destructive" : "outline"}>
+      {formatSkillPulseRecommendation(usage.recommendation)}
+    </Badge>
+  )
+
+  if (!skill) {
+    return (
+      <div className="flex min-w-0 flex-col items-start gap-1">
+        {recommendation}
+        <span className="text-xs text-muted-foreground">No matching inventory control</span>
+      </div>
+    )
+  }
+
+  const enabled = getSkillEnabled(skill)
+  const editable = skill.editable && usage.effectiveStatus !== "disabled-by-plugin"
+  const nextEnabled = !enabled
+
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
+      {recommendation}
+      <Button
+        variant={nextEnabled ? "outline" : "destructive"}
+        size="sm"
+        disabled={!editable}
+        onClick={() =>
+          onStageChange(
+            {
+              id: getSkillChangeId(skill),
+              kind: "skill",
+              label: skill.name,
+              target: skill.path,
+              enabled: nextEnabled,
+            },
+            getBaseSkillEnabled(skill)
+          )
+        }
+      >
+        {nextEnabled ? "Stage enable" : "Stage disable"}
+      </Button>
+      {!editable ? (
+        <span className="text-xs text-muted-foreground">
+          {usage.effectiveStatus === "disabled-by-plugin" ? "Enable the parent plugin first" : "Not editable"}
+        </span>
+      ) : null}
     </div>
   )
 }
@@ -1546,6 +1638,10 @@ function filterSkills(skills: ManagedSkill[], normalizedQuery: string) {
     const searchable = `${skill.name} ${skill.description} ${skill.origin.label} ${skill.controlGate.section ?? ""} ${skill.relativePath} ${skill.parentPluginKey ?? ""}`.toLowerCase()
     return !normalizedQuery || searchable.includes(normalizedQuery)
   })
+}
+
+function getSkillPulsePathKey(skillPath: string) {
+  return skillPath.toLowerCase()
 }
 
 function getPluginChangeId(plugin: ManagedPlugin) {
