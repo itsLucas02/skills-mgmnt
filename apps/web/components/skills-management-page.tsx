@@ -390,7 +390,7 @@ export function SkillsManagementPage({
   return (
     <TooltipProvider>
       <main className="min-h-svh bg-background text-foreground">
-      <section className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8">
+      <section className="mx-auto flex w-full max-w-[112rem] flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8 2xl:px-10">
         <PageHeader />
 
         <Alert>
@@ -436,8 +436,8 @@ export function SkillsManagementPage({
 
         <SummaryGrid summary={inventory.summary} />
 
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
-          <Card>
+        <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_20rem] 2xl:grid-cols-[minmax(0,1fr)_22rem]">
+          <Card className="min-w-0">
             <CardHeader>
               <CardTitle>Capability bundles</CardTitle>
               <CardDescription>
@@ -447,7 +447,7 @@ export function SkillsManagementPage({
                 <Badge variant="secondary">{inventory.summary.active} active skills</Badge>
               </CardAction>
             </CardHeader>
-            <CardContent className="flex flex-col gap-4">
+            <CardContent className="flex min-w-0 flex-col gap-4">
               <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
                 <SearchBar query={query} onQueryChange={setQuery} />
                 <div className="flex gap-2">
@@ -462,7 +462,7 @@ export function SkillsManagementPage({
                 </div>
               </div>
 
-              <Tabs value={tab} onValueChange={selectTab}>
+              <Tabs value={tab} onValueChange={selectTab} className="min-w-0">
                 <TabsList>
                   {mainTabs.map((item) => (
                     <TabsTrigger key={item.value} value={item.value}>
@@ -1126,53 +1126,72 @@ function SkillPulseTable({
   }
 
   return (
-    <div className="max-h-[44rem] overflow-y-auto rounded-lg border">
-      <Table>
-        <TableHeader className="sticky top-0 z-10 bg-card">
-          <TableRow>
-            <TableHead>Skill</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>7 days</TableHead>
-            <TableHead>30 days</TableHead>
-            <TableHead>All time</TableHead>
-            <TableHead>Last loaded</TableHead>
-            <TableHead>Recommendation</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
+    <div className="max-h-[44rem] overflow-auto rounded-lg border">
+      <table className="w-full min-w-[58rem] table-fixed caption-bottom text-sm xl:min-w-0">
+        <thead className="[&_tr]:border-b">
+          <tr className="border-b">
+            <th className="sticky top-0 z-20 h-10 w-[38%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+              Skill
+            </th>
+            <th className="sticky top-0 z-20 h-10 w-[18%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+              Status
+            </th>
+            <th className="sticky top-0 z-20 h-10 w-[8%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+              7 days
+            </th>
+            <th className="sticky top-0 z-20 h-10 w-[8%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+              30 days
+            </th>
+            <th className="sticky top-0 z-20 h-10 w-[8%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+              All time
+            </th>
+            <th className="sticky top-0 z-20 h-10 w-[20%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+              Last loaded
+            </th>
+          </tr>
+        </thead>
+        <tbody className="[&_tr:last-child]:border-0">
           {skills.map((skill) => (
-            <TableRow key={skill.skillPath}>
-              <TableCell>
+            <tr
+              key={skill.skillPath}
+              className="border-b transition-colors hover:bg-muted/50"
+            >
+              <td className="p-2 align-middle">
                 <div className="flex min-w-0 flex-col gap-1">
-                  <span className="font-medium">{skill.skillName}</span>
-                  <span className="max-w-72 truncate font-mono text-xs text-muted-foreground">
+                  <span className="truncate font-medium">{skill.skillName}</span>
+                  <span className="truncate font-mono text-xs text-muted-foreground">
                     {getCompactPathLabel(skill.skillPath)}
                   </span>
                   {skill.parentPluginKey ? (
-                    <span className="text-xs text-muted-foreground">{skill.parentPluginKey}</span>
+                    <span className="truncate text-xs text-muted-foreground">{skill.parentPluginKey}</span>
                   ) : null}
                 </div>
-              </TableCell>
-              <TableCell>
-                <Badge variant={skill.effectiveStatus === "active" ? "secondary" : "outline"}>
-                  {formatSkillPulseStatus(skill.effectiveStatus)}
-                </Badge>
-              </TableCell>
-              <TableCell className="tabular-nums">{skill.loads7d}</TableCell>
-              <TableCell className="tabular-nums">{skill.loads30d}</TableCell>
-              <TableCell className="tabular-nums">{skill.loadsAllTime}</TableCell>
-              <TableCell className="text-sm text-muted-foreground">
+              </td>
+              <td className="p-2 align-middle">
+                <div className="flex min-w-0 flex-col items-start gap-1">
+                  <Badge variant={skill.effectiveStatus === "active" ? "secondary" : "outline"}>
+                    {formatSkillPulseStatus(skill.effectiveStatus)}
+                  </Badge>
+                  <span className={cn(
+                    "truncate text-xs",
+                    skill.recommendation === "disable-candidate"
+                      ? "text-destructive"
+                      : "text-muted-foreground"
+                  )}>
+                    {formatSkillPulseRecommendation(skill.recommendation)}
+                  </span>
+                </div>
+              </td>
+              <td className="p-2 align-middle tabular-nums">{skill.loads7d}</td>
+              <td className="p-2 align-middle tabular-nums">{skill.loads30d}</td>
+              <td className="p-2 align-middle tabular-nums">{skill.loadsAllTime}</td>
+              <td className="p-2 align-middle text-sm text-muted-foreground">
                 {skill.lastLoadedAt ? formatDateTime(skill.lastLoadedAt) : "Never"}
-              </TableCell>
-              <TableCell>
-                <Badge variant={skill.recommendation === "disable-candidate" ? "destructive" : "outline"}>
-                  {formatSkillPulseRecommendation(skill.recommendation)}
-                </Badge>
-              </TableCell>
-            </TableRow>
+              </td>
+            </tr>
           ))}
-        </TableBody>
-      </Table>
+        </tbody>
+      </table>
     </div>
   )
 }
