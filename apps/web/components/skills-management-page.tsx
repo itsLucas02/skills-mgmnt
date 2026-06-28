@@ -1127,13 +1127,13 @@ function SkillPulseTable({
 
   return (
     <div className="max-h-[44rem] overflow-auto rounded-lg border">
-      <table className="w-full min-w-[58rem] table-fixed caption-bottom text-sm xl:min-w-0">
+      <table className="w-full min-w-[64rem] table-fixed caption-bottom text-sm 2xl:min-w-0">
         <thead className="[&_tr]:border-b">
           <tr className="border-b">
-            <th className="sticky top-0 z-20 h-10 w-[38%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+            <th className="sticky top-0 z-20 h-10 w-[34%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
               Skill
             </th>
-            <th className="sticky top-0 z-20 h-10 w-[18%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+            <th className="sticky top-0 z-20 h-10 w-[14%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
               Status
             </th>
             <th className="sticky top-0 z-20 h-10 w-[8%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
@@ -1145,8 +1145,11 @@ function SkillPulseTable({
             <th className="sticky top-0 z-20 h-10 w-[8%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
               All time
             </th>
-            <th className="sticky top-0 z-20 h-10 w-[20%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+            <th className="sticky top-0 z-20 h-10 w-[16%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
               Last loaded
+            </th>
+            <th className="sticky top-0 z-20 h-10 w-[12%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+              Action
             </th>
           </tr>
         </thead>
@@ -1168,25 +1171,20 @@ function SkillPulseTable({
                 </div>
               </td>
               <td className="p-2 align-middle">
-                <div className="flex min-w-0 flex-col items-start gap-1">
-                  <Badge variant={skill.effectiveStatus === "active" ? "secondary" : "outline"}>
-                    {formatSkillPulseStatus(skill.effectiveStatus)}
-                  </Badge>
-                  <span className={cn(
-                    "truncate text-xs",
-                    skill.recommendation === "disable-candidate"
-                      ? "text-destructive"
-                      : "text-muted-foreground"
-                  )}>
-                    {formatSkillPulseRecommendation(skill.recommendation)}
-                  </span>
-                </div>
+                <Badge variant={skill.effectiveStatus === "active" ? "secondary" : "outline"}>
+                  {formatSkillPulseStatus(skill.effectiveStatus)}
+                </Badge>
               </td>
               <td className="p-2 align-middle tabular-nums">{skill.loads7d}</td>
               <td className="p-2 align-middle tabular-nums">{skill.loads30d}</td>
               <td className="p-2 align-middle tabular-nums">{skill.loadsAllTime}</td>
               <td className="p-2 align-middle text-sm text-muted-foreground">
                 {skill.lastLoadedAt ? formatDateTime(skill.lastLoadedAt) : "Never"}
+              </td>
+              <td className="p-2 align-middle">
+                <Badge variant={skill.recommendation === "disable-candidate" ? "destructive" : "outline"}>
+                  {formatSkillPulseRecommendation(skill.recommendation)}
+                </Badge>
               </td>
             </tr>
           ))}
