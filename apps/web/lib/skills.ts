@@ -817,11 +817,11 @@ function readCodexConfigState(): CodexConfigState {
   for (const [index, line] of lines.entries()) {
     const lineNumber = index + 1
     const trimmed = line.trim()
-    const sectionMatch = trimmed.match(/^\[(.+)]$/)
+    const sectionHeader = parseTomlSectionHeader(trimmed)
 
-    if (sectionMatch) {
+    if (sectionHeader) {
       flushMcp()
-      section = sectionMatch[1] ?? ""
+      section = sectionHeader.name
       sectionLine = lineNumber
       pendingSkillPath = null
       pendingSkillLine = lineNumber
@@ -840,7 +840,7 @@ function readCodexConfigState(): CodexConfigState {
       continue
     }
 
-    if (section === "[skills.config]") {
+    if (section === "skills.config") {
       const pathMatch = trimmed.match(/^path\s*=\s*(.+)$/)
       const enabledMatch = trimmed.match(/^enabled\s*=\s*(true|false)$/)
 
@@ -1009,6 +1009,20 @@ function parseTomlString(value: string) {
   }
 
   return trimmed
+}
+
+function parseTomlSectionHeader(line: string) {
+  const arrayTableMatch = line.match(/^\[\[\s*(.+?)\s*\]\]$/)
+  if (arrayTableMatch?.[1]) {
+    return { name: arrayTableMatch[1].trim(), array: true }
+  }
+
+  const tableMatch = line.match(/^\[\s*(.+?)\s*\]$/)
+  if (tableMatch?.[1]) {
+    return { name: tableMatch[1].trim(), array: false }
+  }
+
+  return null
 }
 
 function normalizePath(filePath: string) {
