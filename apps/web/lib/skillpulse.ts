@@ -1,8 +1,11 @@
 import {
   appendFileSync,
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
   readdirSync,
   statSync,
   writeFileSync,
@@ -10,6 +13,7 @@ import {
 import { createHash } from "node:crypto"
 import { homedir } from "node:os"
 import path from "node:path"
+import { StringDecoder } from "node:string_decoder"
 
 import type { ManagedSkill } from "./skills"
 
@@ -87,6 +91,8 @@ const EVENTS_FILE_NAME = "events.jsonl"
 const OFFSETS_FILE_NAME = "offsets.json"
 const COLLECTOR_STATUS_FILE_NAME = "collector-status.json"
 const SETTINGS_FILE_NAME = "settings.json"
+const SESSION_READ_CHUNK_BYTES = 1024 * 1024
+const MAX_SESSION_LINE_CHARS = 16 * 1024 * 1024
 
 export function syncSkillPulseUsage({
   codexHome = CODEX_HOME,
@@ -123,30 +129,27 @@ export function syncSkillPulseUsage({
     }
 
     processedFileCount += 1
-    const lines = readFileSync(sessionFile, "utf8").split(/\r?\n/)
     const sessionId = getSessionIdFromFile(sessionFile)
 
-    for (const [lineIndex, line] of lines.entries()) {
+    scanSessionFileLines(sessionFile, (line, lineNumber) => {
       if (!line.trim()) {
-        continue
+        return
       }
 
       scannedLineCount += 1
       const extractedEvents = extractSkillPulseEventsFromSessionLine(line, {
         sessionFile,
         sessionId,
-        fallbackLineId: lineIndex + 1,
+        fallbackLineId: lineNumber,
       })
 
       for (const event of extractedEvents) {
-        if (seenEventIds.has(event.id)) {
-          continue
+        if (!seenEventIds.has(event.id)) {
+          seenEventIds.add(event.id)
+          newEvents.push(event)
         }
-
-        seenEventIds.add(event.id)
-        newEvents.push(event)
       }
-    }
+    })
 
     state.files[sessionFile] = {
       size: stats.size,
@@ -404,6 +407,63 @@ function getSessionFiles(codexHome: string) {
 
   walk(sessionsRoot)
   return files.sort()
+}
+
+function scanSessionFileLines(
+  sessionFile: string,
+  onLine: (line: string, lineNumber: number) => void
+) {
+  const fd = openSync(sessionFile, "r")
+  const buffer = Buffer.allocUnsafe(SESSION_READ_CHUNK_BYTES)
+  const decoder = new StringDecoder("utf8")
+  let pendingLine = ""
+  let lineNumber = 0
+  let skippingOversizedLine = false
+
+  try {
+    while (true) {
+      const bytesRead = readSync(fd, buffer, 0, buffer.length, null)
+      if (bytesRead === 0) {
+        break
+      }
+
+      const chunk = decoder.write(buffer.subarray(0, bytesRead))
+      const parts = chunk.split("\n")
+
+      for (let index = 0; index < parts.length - 1; index += 1) {
+        const line = `${pendingLine}${parts[index] ?? ""}`
+        pendingLine = ""
+        lineNumber += 1
+
+        if (skippingOversizedLine) {
+          skippingOversizedLine = false
+          continue
+        }
+
+        onLine(trimTrailingCarriageReturn(line), lineNumber)
+      }
+
+      pendingLine += parts[parts.length - 1] ?? ""
+
+      if (pendingLine.length > MAX_SESSION_LINE_CHARS) {
+        pendingLine = ""
+        skippingOversizedLine = true
+      }
+    }
+
+    pendingLine += decoder.end()
+
+    if (pendingLine && !skippingOversizedLine) {
+      lineNumber += 1
+      onLine(trimTrailingCarriageReturn(pendingLine), lineNumber)
+    }
+  } finally {
+    closeSync(fd)
+  }
+}
+
+function trimTrailingCarriageReturn(line: string) {
+  return line.endsWith("\r") ? line.slice(0, -1) : line
 }
 
 function extractSkillPaths(value: string) {

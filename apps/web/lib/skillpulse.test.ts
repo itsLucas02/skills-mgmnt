@@ -1,5 +1,13 @@
 import assert from "node:assert/strict"
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import {
+  closeSync,
+  mkdtempSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  truncateSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import test from "node:test"
@@ -109,6 +117,48 @@ test("syncs appended session lines once and stores offset state", () => {
   assert.equal(first.newEventCount, 1)
   assert.equal(second.newEventCount, 0)
   assert.equal(eventLines.length, 1)
+})
+
+test("backfill streams sparse giant session files without failing the sync", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "skillpulse-"))
+  const codexHome = path.join(root, ".codex")
+  const sessionRoot = path.join(codexHome, "sessions", "2026", "06", "28")
+  const skillPath = path.join(codexHome, "skills", "giant", "SKILL.md")
+  const sessionFile = path.join(sessionRoot, "giant.jsonl")
+
+  mkdirSync(path.dirname(skillPath), { recursive: true })
+  mkdirSync(sessionRoot, { recursive: true })
+  writeFileSync(skillPath, "---\nname: giant\n---\n", "utf8")
+  writeFileSync(
+    sessionFile,
+    `${JSON.stringify({
+      timestamp: "2026-06-28T09:00:00.000Z",
+      type: "response_item",
+      payload: {
+        type: "function_call",
+        call_id: "call_giant",
+        name: "shell_command",
+        arguments: JSON.stringify({ command: `Get-Content -Raw ${skillPath}` }),
+      },
+    })}\n`,
+    "utf8"
+  )
+
+  const fd = openSync(sessionFile, "a")
+  try {
+    truncateSync(sessionFile, 545 * 1024 * 1024)
+  } finally {
+    closeSync(fd)
+  }
+
+  const result = syncSkillPulseUsage({
+    codexHome,
+    mode: "backfill-all",
+    now: new Date("2026-06-28T10:00:00.000Z"),
+  })
+
+  assert.equal(result.newEventCount, 1)
+  assert.equal(result.processedFileCount, 1)
 })
 
 test("aggregates usage and flags enabled skills unused across a seven-day window", () => {
