@@ -221,14 +221,23 @@ export function aggregateSkillPulseUsage({
     ? Math.floor((now.getTime() - new Date(firstEventAt).getTime()) / (24 * 60 * 60 * 1000))
     : 0
   const bySkillPath = new Map<string, SkillPulseEvent[]>()
+  const byStableSkillKey = new Map<string, SkillPulseEvent[]>()
 
   for (const event of events) {
     const key = normalizePath(event.skillPath)
     bySkillPath.set(key, [...(bySkillPath.get(key) ?? []), event])
+
+    const stableKey = getStableSkillUsageKey(event.skillPath, event.skillName)
+    if (stableKey) {
+      byStableSkillKey.set(stableKey, [...(byStableSkillKey.get(stableKey) ?? []), event])
+    }
   }
 
-  const usage = skills.map((skill) => {
-    const skillEvents = bySkillPath.get(normalizePath(skill.path)) ?? []
+  const usage = getUniqueSkillPulseSkills(skills).map((skill) => {
+    const exactEvents = bySkillPath.get(normalizePath(skill.path)) ?? []
+    const stableSkillKey = getStableSkillUsageKey(skill.path, skill.name)
+    const stableEvents = stableSkillKey ? byStableSkillKey.get(stableSkillKey) ?? [] : []
+    const skillEvents = stableSkillKey ? stableEvents : exactEvents
     const eventTimes = skillEvents.map((event) => new Date(event.occurredAt).getTime())
     const loads7d = eventTimes.filter((time) => time >= sevenDaysAgo).length
     const loads30d = eventTimes.filter((time) => time >= thirtyDaysAgo).length
@@ -464,6 +473,59 @@ function scanSessionFileLines(
 
 function trimTrailingCarriageReturn(line: string) {
   return line.endsWith("\r") ? line.slice(0, -1) : line
+}
+
+function getUniqueSkillPulseSkills(skills: ManagedSkill[]) {
+  const byKey = new Map<string, ManagedSkill>()
+
+  for (const skill of skills) {
+    const key = getSkillInventoryUsageKey(skill)
+    const current = byKey.get(key)
+
+    if (!current || shouldPreferSkillPulseSkill(skill, current)) {
+      byKey.set(key, skill)
+    }
+  }
+
+  return [...byKey.values()]
+}
+
+function getSkillInventoryUsageKey(skill: ManagedSkill) {
+  return getStableSkillUsageKey(skill.path, skill.name) ?? normalizePath(skill.path)
+}
+
+function shouldPreferSkillPulseSkill(candidate: ManagedSkill, current: ManagedSkill) {
+  if (candidate.parentPluginKey && !current.parentPluginKey) {
+    return true
+  }
+
+  if (
+    !candidate.path.toLowerCase().includes("\\plugin-backup-") &&
+    current.path.toLowerCase().includes("\\plugin-backup-")
+  ) {
+    return true
+  }
+
+  return false
+}
+
+function getStableSkillUsageKey(skillPath: string, skillName: string) {
+  const normalizedSkillPath = normalizePath(skillPath)
+  const parts = normalizedSkillPath.split(/[\\/]/)
+  const skillsIndex = parts.lastIndexOf("skills")
+
+  if (skillsIndex < 3 || parts[skillsIndex + 1] !== skillName.toLowerCase()) {
+    return null
+  }
+
+  const possiblePluginKey = parts[skillsIndex - 2]
+  const cacheIndex = parts.lastIndexOf("cache")
+  const possibleMarketplace = cacheIndex >= 0 ? parts[cacheIndex + 1] : parts[skillsIndex - 3]
+  if (!possiblePluginKey || !possibleMarketplace) {
+    return null
+  }
+
+  return `${possibleMarketplace}:${possiblePluginKey}:${skillName.toLowerCase()}`
 }
 
 function extractSkillPaths(value: string) {

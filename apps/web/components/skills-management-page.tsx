@@ -90,6 +90,8 @@ type CapabilityInventory = {
 }
 
 type MainTab = "plugins" | "standalone" | "mcp" | "skillpulse" | "raw"
+type SkillPulseStatusFilter = "all" | "active" | "disabled"
+type SkillPulseActionFilter = "all" | "disable-candidate" | "keep"
 
 type ApplyState = {
   lastAppliedAt?: string
@@ -1040,7 +1042,22 @@ function SkillPulsePanel({
   onStageChange: (change: ConfigChange, currentEnabled: boolean) => void
 }) {
   const collectorRunning = Boolean(summary?.status.collectorRunning)
-  const topSkills = summary?.skills ?? []
+  const topSkills = useMemo(() => summary?.skills ?? [], [summary?.skills])
+  const [statusFilter, setStatusFilter] = useState<SkillPulseStatusFilter>("all")
+  const [actionFilter, setActionFilter] = useState<SkillPulseActionFilter>("all")
+  const filteredSkills = useMemo(
+    () =>
+      topSkills.filter((skill) => {
+        const statusMatches =
+          statusFilter === "all" ||
+          (statusFilter === "active" && skill.effectiveStatus === "active") ||
+          (statusFilter === "disabled" && skill.effectiveStatus !== "active")
+        const actionMatches = actionFilter === "all" || skill.recommendation === actionFilter
+
+        return statusMatches && actionMatches
+      }),
+    [actionFilter, statusFilter, topSkills]
+  )
 
   return (
     <div className="flex flex-col gap-4">
@@ -1120,8 +1137,16 @@ function SkillPulsePanel({
             <Metric label="Last sync" value={summary.status.lastSyncAt ? formatDateTime(summary.status.lastSyncAt) : "Not synced yet"} />
             <Metric label="Last skill load" value={summary.status.lastEventAt ? formatDateTime(summary.status.lastEventAt) : "No events tracked yet"} />
           </div>
+          <SkillPulseFilterBar
+            statusFilter={statusFilter}
+            actionFilter={actionFilter}
+            visibleCount={filteredSkills.length}
+            totalCount={topSkills.length}
+            onStatusFilterChange={setStatusFilter}
+            onActionFilterChange={setActionFilter}
+          />
           <SkillPulseTable
-            skills={topSkills}
+            skills={filteredSkills}
             skillByUsagePath={skillByUsagePath}
             getSkillEnabled={getSkillEnabled}
             onStageChange={onStageChange}
@@ -1130,6 +1155,82 @@ function SkillPulsePanel({
       ) : (
         <EmptyState title={loading ? "Loading SkillPulse usage" : "No SkillPulse data loaded"} />
       )}
+    </div>
+  )
+}
+
+function SkillPulseFilterBar({
+  statusFilter,
+  actionFilter,
+  visibleCount,
+  totalCount,
+  onStatusFilterChange,
+  onActionFilterChange,
+}: {
+  statusFilter: SkillPulseStatusFilter
+  actionFilter: SkillPulseActionFilter
+  visibleCount: number
+  totalCount: number
+  onStatusFilterChange: (filter: SkillPulseStatusFilter) => void
+  onActionFilterChange: (filter: SkillPulseActionFilter) => void
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-3 xl:flex-row xl:items-center xl:justify-between">
+      <div className="flex flex-wrap items-center gap-3">
+        <SegmentedFilter
+          label="Status"
+          value={statusFilter}
+          options={[
+            { value: "all", label: "All" },
+            { value: "active", label: "Active" },
+            { value: "disabled", label: "Disabled" },
+          ]}
+          onChange={onStatusFilterChange}
+        />
+        <SegmentedFilter
+          label="Action"
+          value={actionFilter}
+          options={[
+            { value: "all", label: "All" },
+            { value: "disable-candidate", label: "Candidates" },
+            { value: "keep", label: "Keep" },
+          ]}
+          onChange={onActionFilterChange}
+        />
+      </div>
+      <div className="text-sm text-muted-foreground">
+        Showing <span className="font-medium text-foreground">{visibleCount}</span> of <span className="font-medium text-foreground">{totalCount}</span>
+      </div>
+    </div>
+  )
+}
+
+function SegmentedFilter<TValue extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string
+  value: TValue
+  options: Array<{ value: TValue; label: string }>
+  onChange: (value: TValue) => void
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <div className="inline-flex rounded-lg border bg-background p-0.5">
+        {options.map((option) => (
+          <Button
+            key={option.value}
+            variant={option.value === value ? "secondary" : "ghost"}
+            size="xs"
+            onClick={() => onChange(option.value)}
+          >
+            {option.label}
+          </Button>
+        ))}
+      </div>
     </div>
   )
 }
@@ -1154,7 +1255,7 @@ function SkillPulseTable({
       <table className="w-full min-w-[64rem] table-fixed caption-bottom text-sm xl:min-w-0">
         <thead className="[&_tr]:border-b">
           <tr className="border-b">
-            <th className="sticky top-0 z-20 h-10 w-[30%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+            <th className="sticky top-0 z-20 h-10 w-[32%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
               Skill
             </th>
             <th className="sticky top-0 z-20 h-10 w-[12%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
@@ -1172,7 +1273,7 @@ function SkillPulseTable({
             <th className="sticky top-0 z-20 h-10 w-[15%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
               Last loaded
             </th>
-            <th className="sticky top-0 z-20 h-10 w-[22%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+            <th className="sticky top-0 z-20 h-10 w-[20%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
               Action
             </th>
           </tr>
@@ -1256,27 +1357,30 @@ function SkillPulseActionControl({
   const nextEnabled = !enabled
 
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-2">
-      {recommendation}
-      <Button
-        variant={nextEnabled ? "outline" : "destructive"}
-        size="sm"
-        disabled={!editable}
-        onClick={() =>
-          onStageChange(
-            {
-              id: getSkillChangeId(skill),
-              kind: "skill",
-              label: skill.name,
-              target: skill.path,
-              enabled: nextEnabled,
-            },
-            getBaseSkillEnabled(skill)
-          )
-        }
-      >
-        {nextEnabled ? "Stage enable" : "Stage disable"}
-      </Button>
+    <div className="flex min-w-0 items-center gap-2">
+      <span className="min-w-0 truncate">{recommendation}</span>
+      <TooltipIconButton label={nextEnabled ? `Stage enable ${skill.name}` : `Stage disable ${skill.name}`}>
+        <Button
+          variant={nextEnabled ? "outline" : "destructive"}
+          size="icon-sm"
+          aria-label={nextEnabled ? `Stage enable ${skill.name}` : `Stage disable ${skill.name}`}
+          disabled={!editable}
+          onClick={() =>
+            onStageChange(
+              {
+                id: getSkillChangeId(skill),
+                kind: "skill",
+                label: skill.name,
+                target: skill.path,
+                enabled: nextEnabled,
+              },
+              getBaseSkillEnabled(skill)
+            )
+          }
+        >
+          {nextEnabled ? <PlayIcon /> : <PauseCircleIcon />}
+        </Button>
+      </TooltipIconButton>
       {!editable ? (
         <span className="text-xs text-muted-foreground">
           {usage.effectiveStatus === "disabled-by-plugin" ? "Enable the parent plugin first" : "Not editable"}

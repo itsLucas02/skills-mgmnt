@@ -204,3 +204,39 @@ test("aggregates usage and flags enabled skills unused across a seven-day window
   assert.equal(disabled?.recommendation, "keep")
   assert.equal(summary.totals.disableCandidateCount, 1)
 })
+
+test("aggregates plugin skill usage across plugin cache version changes", () => {
+  const backupWritingPlans = createSkill({
+    name: "writing-plans",
+    path: "C:\\Users\\User\\.codex\\plugins\\cache\\openai-curated\\plugin-backup-y1VbkS\\superpowers\\b197a8c5\\skills\\writing-plans\\SKILL.md",
+  })
+  const currentWritingPlans = createSkill({
+    name: "writing-plans",
+    path: "C:\\Users\\User\\.codex\\plugins\\cache\\openai-curated\\superpowers\\3fdeeb49\\skills\\writing-plans\\SKILL.md",
+    parentPluginKey: "superpowers@openai-curated",
+  })
+
+  const summary = aggregateSkillPulseUsage({
+    skills: [backupWritingPlans, currentWritingPlans],
+    events: [
+      {
+        id: "event-1",
+        occurredAt: "2026-06-27T09:00:00.000Z",
+        sessionId: "session-1",
+        sessionFile: "rollout.jsonl",
+        skillPath: "C:\\Users\\User\\.codex\\plugins\\cache\\openai-curated\\superpowers\\63976030\\skills\\writing-plans\\SKILL.md",
+        skillName: "writing-plans",
+        source: "session-jsonl-skill-read",
+      },
+    ],
+    now: new Date("2026-06-28T10:00:00.000Z"),
+    firstEventAt: "2026-06-20T09:00:00.000Z",
+    lastSyncAt: "2026-06-28T10:00:00.000Z",
+  })
+
+  assert.equal(summary.skills.length, 1)
+  assert.equal(summary.skills[0]?.parentPluginKey, "superpowers@openai-curated")
+  assert.equal(summary.skills[0]?.loads7d, 1)
+  assert.equal(summary.skills[0]?.loadsAllTime, 1)
+  assert.equal(summary.skills[0]?.recommendation, "keep")
+})
