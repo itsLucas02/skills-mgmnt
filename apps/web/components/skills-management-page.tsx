@@ -1,7 +1,7 @@
 "use client"
 
 import type { ReactElement } from "react"
-import { useEffect, useMemo, useState } from "react"
+import { useDeferredValue, useEffect, useMemo, useState } from "react"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
 import {
@@ -113,8 +113,8 @@ type CapabilityInventory = {
   summary: SkillSummary
 }
 
-type MainTab = "manage" | "usage"
-type ManageFilter = "all" | "plugins" | "skills" | "mcp"
+type MainTab = "manage" | "all-skills" | "usage"
+type ManageFilter = "plugins" | "skills" | "mcp"
 
 type ApplyState = {
   lastAppliedAt?: string
@@ -125,6 +125,7 @@ type ApplyState = {
 
 const mainTabs = [
   { value: "manage", label: "Manage" },
+  { value: "all-skills", label: "All skills" },
   { value: "usage", label: "Usage & cleanup" },
 ] satisfies Array<{ value: MainTab; label: string }>
 
@@ -150,7 +151,9 @@ export function SkillsManagementPage({
   >({})
   const [collapsedPlugins, setCollapsedPlugins] = useState<
     Record<string, boolean>
-  >({})
+  >(() =>
+    Object.fromEntries(inventory.plugins.map((plugin) => [plugin.key, true]))
+  )
   const [applyState, setApplyState] = useState<ApplyState>({})
   const [applyOpen, setApplyOpen] = useState(false)
   const [applying, setApplying] = useState(false)
@@ -166,7 +169,8 @@ export function SkillsManagementPage({
   const [lastSkillPulseSync, setLastSkillPulseSync] =
     useState<SkillPulseSyncResult | null>(null)
 
-  const normalizedQuery = query.trim().toLowerCase()
+  const deferredQuery = useDeferredValue(query)
+  const normalizedQuery = deferredQuery.trim().toLowerCase()
   const stagedList = useMemo(
     () => Object.values(stagedChanges),
     [stagedChanges]
@@ -175,13 +179,16 @@ export function SkillsManagementPage({
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
       const savedCollapsedPlugins = readCollapsedPlugins()
-      setCollapsedPlugins(
-        Object.keys(savedCollapsedPlugins).length
-          ? savedCollapsedPlugins
-          : Object.fromEntries(
-              inventory.plugins.map((plugin) => [plugin.key, true])
-            )
-      )
+      if (Object.keys(savedCollapsedPlugins).length) {
+        setCollapsedPlugins(
+          Object.fromEntries(
+            inventory.plugins.map((plugin) => [
+              plugin.key,
+              savedCollapsedPlugins[plugin.key] ?? true,
+            ])
+          )
+        )
+      }
       setTab(readActiveTab())
     }, 0)
 
@@ -523,152 +530,189 @@ export function SkillsManagementPage({
             </TabsList>
 
             <TabsContent value="manage">
-              <Card className="min-w-0">
-                <CardHeader>
-                  <div>
-                    <CardTitle className="text-balance">
-                      Manage capabilities
-                    </CardTitle>
-                    <CardDescription className="text-pretty">
-                      Find and control skills, plugin bundles, and MCP servers
-                      from one place.
-                    </CardDescription>
-                  </div>
-                  <CardAction>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger
-                        render={<Button variant="outline" size="sm" />}
+              {tab === "manage" ? (
+                <Card className="min-w-0">
+                  <CardHeader>
+                    <div>
+                      <CardTitle className="text-balance">
+                        Manage capabilities
+                      </CardTitle>
+                      <CardDescription className="text-pretty">
+                        Find and control skills, plugin bundles, and MCP servers
+                        from one place.
+                      </CardDescription>
+                    </div>
+                    <CardAction>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          render={<Button variant="outline" size="sm" />}
+                        >
+                          <MoreHorizontalIcon data-icon="inline-start" />
+                          Advanced
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-56">
+                          <DropdownMenuGroup>
+                            <DropdownMenuLabel>
+                              Plugin display
+                            </DropdownMenuLabel>
+                            <DropdownMenuItem
+                              onClick={() => setAllPluginsCollapsed(false)}
+                            >
+                              <ChevronDownIcon /> Expand plugin bundles
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => setAllPluginsCollapsed(true)}
+                            >
+                              <ChevronRightIcon /> Collapse plugin bundles
+                            </DropdownMenuItem>
+                          </DropdownMenuGroup>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onClick={showAdvancedDiagnostics}>
+                            <FolderSearchIcon /> Show diagnostics
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </CardAction>
+                  </CardHeader>
+                  <CardContent className="flex min-w-0 flex-col gap-5">
+                    <div className="flex flex-col gap-4 rounded-lg border bg-muted/20 p-3 sm:p-4">
+                      <SegmentedFilter
+                        label="Capability type"
+                        value={manageFilter}
+                        options={[
+                          {
+                            value: "plugins",
+                            label: `Plugins (${inventory.summary.pluginCount})`,
+                          },
+                          {
+                            value: "skills",
+                            label: `Standalone skills (${inventory.standaloneSkills.length})`,
+                          },
+                          {
+                            value: "mcp",
+                            label: `MCP servers (${inventory.summary.mcpServerCount})`,
+                          },
+                        ]}
+                        onChange={setManageFilter}
+                      />
+                      <SearchBar query={query} onQueryChange={setQuery} />
+                    </div>
+
+                    {manageFilter === "plugins" ? (
+                      <CapabilitySection
+                        title="Plugin bundles"
+                        count={filteredPlugins.length}
                       >
-                        <MoreHorizontalIcon data-icon="inline-start" />
-                        Advanced
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-56">
-                        <DropdownMenuGroup>
-                          <DropdownMenuLabel>Plugin display</DropdownMenuLabel>
-                          <DropdownMenuItem
-                            onClick={() => setAllPluginsCollapsed(false)}
-                          >
-                            <ChevronDownIcon /> Expand plugin bundles
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => setAllPluginsCollapsed(true)}
-                          >
-                            <ChevronRightIcon /> Collapse plugin bundles
-                          </DropdownMenuItem>
-                        </DropdownMenuGroup>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={showAdvancedDiagnostics}>
-                          <FolderSearchIcon /> Show diagnostics
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </CardAction>
-                </CardHeader>
-                <CardContent className="flex min-w-0 flex-col gap-5">
-                  <div className="flex flex-col gap-4 rounded-lg border bg-muted/20 p-3 sm:p-4">
-                    <SegmentedFilter
-                      label="Capability type"
-                      value={manageFilter}
-                      options={[
-                        {
-                          value: "plugins",
-                          label: `Plugins (${inventory.summary.pluginCount})`,
-                        },
-                        {
-                          value: "skills",
-                          label: `Standalone skills (${inventory.standaloneSkills.length})`,
-                        },
-                        {
-                          value: "mcp",
-                          label: `MCP servers (${inventory.summary.mcpServerCount})`,
-                        },
-                        { value: "all", label: "Show all" },
-                      ]}
-                      onChange={setManageFilter}
+                        <PluginBundleList
+                          plugins={filteredPlugins}
+                          collapsedPlugins={collapsedPlugins}
+                          getPluginEnabled={getPluginEnabled}
+                          getSkillEnabled={getSkillEnabled}
+                          onPluginCollapse={togglePluginCollapse}
+                          onStageChange={stageChange}
+                          onDetails={showDetails}
+                          onOpenExternal={openExternal}
+                          onOpenConfigGate={openConfigGate}
+                        />
+                      </CapabilitySection>
+                    ) : null}
+
+                    {manageFilter === "skills" ? (
+                      <CapabilitySection
+                        title="Standalone skills"
+                        count={filteredStandaloneSkills.length}
+                      >
+                        <SkillTable
+                          skills={filteredStandaloneSkills}
+                          emptyTitle="No standalone skills match your search"
+                          getSkillEnabled={getSkillEnabled}
+                          onStageChange={stageChange}
+                          onDetails={showDetails}
+                          onOpenExternal={openExternal}
+                          onOpenConfigGate={openConfigGate}
+                        />
+                      </CapabilitySection>
+                    ) : null}
+
+                    {manageFilter === "mcp" ? (
+                      <CapabilitySection
+                        title="MCP servers"
+                        count={filteredMcpServers.length}
+                      >
+                        <McpTable
+                          servers={filteredMcpServers}
+                          getMcpEnabled={getMcpEnabled}
+                          onStageChange={stageChange}
+                          onDetails={showDetails}
+                          onOpenExternal={openExternal}
+                          onOpenConfigGate={openConfigGate}
+                        />
+                      </CapabilitySection>
+                    ) : null}
+
+                    <AdvancedDiagnostics
+                      open={advancedOpen}
+                      onOpenChange={setAdvancedOpen}
+                      summary={inventory.summary}
                     />
+                  </CardContent>
+                </Card>
+              ) : null}
+            </TabsContent>
+
+            <TabsContent value="all-skills">
+              {tab === "all-skills" ? (
+                <Card className="min-w-0">
+                  <CardHeader>
+                    <div>
+                      <CardTitle className="text-balance">
+                        All discovered skills
+                      </CardTitle>
+                      <CardDescription className="text-pretty">
+                        Every standalone and plugin-owned skill found on this
+                        computer.
+                      </CardDescription>
+                    </div>
+                    <CardAction>
+                      <Badge variant="secondary" className="tabular-nums">
+                        {inventory.summary.total} skills
+                      </Badge>
+                    </CardAction>
+                  </CardHeader>
+                  <CardContent className="flex min-w-0 flex-col gap-4">
                     <SearchBar query={query} onQueryChange={setQuery} />
-                  </div>
-
-                  {manageFilter === "all" || manageFilter === "plugins" ? (
-                    <CapabilitySection
-                      title="Plugin bundles"
-                      count={filteredPlugins.length}
-                    >
-                      <PluginBundleList
-                        plugins={filteredPlugins}
-                        collapsedPlugins={collapsedPlugins}
-                        getPluginEnabled={getPluginEnabled}
-                        getSkillEnabled={getSkillEnabled}
-                        onPluginCollapse={togglePluginCollapse}
-                        onStageChange={stageChange}
-                        onDetails={showDetails}
-                        onOpenExternal={openExternal}
-                        onOpenConfigGate={openConfigGate}
-                      />
-                    </CapabilitySection>
-                  ) : null}
-
-                  {manageFilter === "all" || manageFilter === "skills" ? (
-                    <CapabilitySection
-                      title="Standalone skills"
-                      count={filteredStandaloneSkills.length}
-                    >
-                      <SkillTable
-                        skills={filteredStandaloneSkills}
-                        emptyTitle="No standalone skills match your search"
-                        getSkillEnabled={getSkillEnabled}
-                        onStageChange={stageChange}
-                        onDetails={showDetails}
-                        onOpenExternal={openExternal}
-                        onOpenConfigGate={openConfigGate}
-                      />
-                    </CapabilitySection>
-                  ) : null}
-
-                  {manageFilter === "all" || manageFilter === "mcp" ? (
-                    <CapabilitySection
-                      title="MCP servers"
-                      count={filteredMcpServers.length}
-                    >
-                      <McpTable
-                        servers={filteredMcpServers}
-                        getMcpEnabled={getMcpEnabled}
-                        onStageChange={stageChange}
-                        onDetails={showDetails}
-                        onOpenExternal={openExternal}
-                        onOpenConfigGate={openConfigGate}
-                      />
-                    </CapabilitySection>
-                  ) : null}
-
-                  <AdvancedDiagnostics
-                    open={advancedOpen}
-                    onOpenChange={setAdvancedOpen}
-                    summary={inventory.summary}
-                    skills={filteredRawSkills}
-                    getSkillEnabled={getSkillEnabled}
-                    onStageChange={stageChange}
-                    onDetails={showDetails}
-                    onOpenExternal={openExternal}
-                    onOpenConfigGate={openConfigGate}
-                  />
-                </CardContent>
-              </Card>
+                    <SkillTable
+                      key={`all-skills-${normalizedQuery}`}
+                      skills={filteredRawSkills}
+                      emptyTitle="No skills match your search"
+                      getSkillEnabled={getSkillEnabled}
+                      onStageChange={stageChange}
+                      onDetails={showDetails}
+                      onOpenExternal={openExternal}
+                      onOpenConfigGate={openConfigGate}
+                      pageSize={50}
+                      showParent
+                    />
+                  </CardContent>
+                </Card>
+              ) : null}
             </TabsContent>
 
             <TabsContent value="usage">
-              <SkillPulsePanel
-                summary={skillPulseSummary}
-                loading={skillPulseLoading}
-                syncing={skillPulseSyncing}
-                collectorAction={collectorAction}
-                lastSync={lastSkillPulseSync}
-                skillByUsagePath={skillByUsagePath}
-                getSkillEnabled={getSkillEnabled}
-                onSync={syncSkillPulse}
-                onCollectorAction={setSkillPulseCollector}
-                onStageChange={stageChange}
-              />
+              {tab === "usage" ? (
+                <SkillPulsePanel
+                  summary={skillPulseSummary}
+                  loading={skillPulseLoading}
+                  syncing={skillPulseSyncing}
+                  collectorAction={collectorAction}
+                  lastSync={lastSkillPulseSync}
+                  skillByUsagePath={skillByUsagePath}
+                  getSkillEnabled={getSkillEnabled}
+                  onSync={syncSkillPulse}
+                  onCollectorAction={setSkillPulseCollector}
+                  onStageChange={stageChange}
+                />
+              ) : null}
             </TabsContent>
           </Tabs>
         </section>
@@ -997,6 +1041,7 @@ function SkillTable({
   showParent = false,
   compact = false,
   parentPluginEnabled = true,
+  pageSize,
 }: {
   skills: ManagedSkill[]
   emptyTitle: string
@@ -1008,96 +1053,140 @@ function SkillTable({
   showParent?: boolean
   compact?: boolean
   parentPluginEnabled?: boolean
+  pageSize?: number
 }) {
+  const [page, setPage] = useState(0)
+  const pageCount = pageSize
+    ? Math.max(1, Math.ceil(skills.length / pageSize))
+    : 1
+  const currentPage = Math.min(page, pageCount - 1)
+  const visibleSkills = pageSize
+    ? skills.slice(currentPage * pageSize, (currentPage + 1) * pageSize)
+    : skills
+
   if (!skills.length) {
     return <EmptyState title={emptyTitle} />
   }
 
   return (
-    <div
-      className={
-        compact
-          ? "overflow-hidden rounded-lg border"
-          : "max-h-[44rem] overflow-y-auto rounded-lg border"
-      }
-    >
-      <Table className="table-fixed">
-        <TableHeader className="sticky top-0 z-10 bg-card">
-          <TableRow>
-            <TableHead className={showParent ? "w-[28%]" : "w-[34%]"}>
-              Skill
-            </TableHead>
-            {showParent ? (
-              <TableHead className="w-[14%]">Parent</TableHead>
-            ) : null}
-            <TableHead className="w-44">Status</TableHead>
-            <TableHead>Path</TableHead>
-            <TableHead className="w-44 text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {skills.map((skill) => (
-            <TableRow key={skill.id}>
-              <TableCell className="min-w-0 whitespace-normal">
-                <div className="flex flex-col gap-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">{skill.name}</span>
-                    <OriginBadge origin={skill.origin} />
-                  </div>
-                  <span className="line-clamp-2 text-muted-foreground">
-                    {skill.description}
-                  </span>
-                </div>
-              </TableCell>
+    <div className="flex min-w-0 flex-col gap-3">
+      <div
+        className={
+          compact
+            ? "overflow-hidden rounded-lg border"
+            : "max-h-[44rem] overflow-y-auto rounded-lg border"
+        }
+      >
+        <Table className="table-fixed">
+          <TableHeader className="sticky top-0 z-10 bg-card">
+            <TableRow>
+              <TableHead className={showParent ? "w-[28%]" : "w-[34%]"}>
+                Skill
+              </TableHead>
               {showParent ? (
-                <TableCell>
-                  <Badge variant="outline">
-                    {skill.parentPluginKey ?? "Standalone"}
-                  </Badge>
-                </TableCell>
+                <TableHead className="w-[14%]">Parent</TableHead>
               ) : null}
-              <TableCell>
-                <EffectiveStatusControl
-                  skill={skill}
-                  checked={getSkillEnabled(skill)}
-                  parentPluginEnabled={parentPluginEnabled}
-                  onStageChange={onStageChange}
-                />
-              </TableCell>
-              <TableCell className="min-w-0 overflow-hidden font-mono text-xs text-muted-foreground">
-                <div className="flex min-w-0 flex-col gap-1">
-                  <span
-                    className="truncate"
-                    title={skill.relativePath}
-                    aria-label={skill.relativePath}
-                  >
-                    {getCompactPathLabel(skill.relativePath)}
-                  </span>
-                  <span className="truncate font-sans text-[0.7rem]">
-                    {getSkillStatusReason(skill, parentPluginEnabled)}
-                  </span>
-                  <span
-                    className="truncate font-sans text-[0.7rem]"
-                    title={formatControlGateLabel(skill.controlGate)}
-                  >
-                    {formatControlGateLabel(skill.controlGate)}
-                  </span>
-                </div>
-              </TableCell>
-              <TableCell className="text-right">
-                <ActionButtons
-                  detailId={skill.detailId}
-                  deleteLabel={`Delete ${skill.name}`}
-                  onDetails={onDetails}
-                  onOpenExternal={onOpenExternal}
-                  controlGate={skill.controlGate}
-                  onOpenConfigGate={onOpenConfigGate}
-                />
-              </TableCell>
+              <TableHead className="w-44">Status</TableHead>
+              <TableHead>Path</TableHead>
+              <TableHead className="w-44 text-right">Actions</TableHead>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {visibleSkills.map((skill) => (
+              <TableRow
+                key={skill.id}
+                className="[contain-intrinsic-size:auto_5rem] [content-visibility:auto]"
+              >
+                <TableCell className="min-w-0 whitespace-normal">
+                  <div className="flex flex-col gap-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium">{skill.name}</span>
+                      <OriginBadge origin={skill.origin} />
+                    </div>
+                    <span className="line-clamp-2 text-muted-foreground">
+                      {skill.description}
+                    </span>
+                  </div>
+                </TableCell>
+                {showParent ? (
+                  <TableCell>
+                    <Badge variant="outline">
+                      {skill.parentPluginKey ?? "Standalone"}
+                    </Badge>
+                  </TableCell>
+                ) : null}
+                <TableCell>
+                  <EffectiveStatusControl
+                    skill={skill}
+                    checked={getSkillEnabled(skill)}
+                    parentPluginEnabled={parentPluginEnabled}
+                    onStageChange={onStageChange}
+                  />
+                </TableCell>
+                <TableCell className="min-w-0 overflow-hidden font-mono text-xs text-muted-foreground">
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <span
+                      className="truncate"
+                      title={skill.relativePath}
+                      aria-label={skill.relativePath}
+                    >
+                      {getCompactPathLabel(skill.relativePath)}
+                    </span>
+                    <span className="truncate font-sans text-[0.7rem]">
+                      {getSkillStatusReason(skill, parentPluginEnabled)}
+                    </span>
+                    <span
+                      className="truncate font-sans text-[0.7rem]"
+                      title={formatControlGateLabel(skill.controlGate)}
+                    >
+                      {formatControlGateLabel(skill.controlGate)}
+                    </span>
+                  </div>
+                </TableCell>
+                <TableCell className="text-right">
+                  <ActionButtons
+                    detailId={skill.detailId}
+                    deleteLabel={`Delete ${skill.name}`}
+                    onDetails={onDetails}
+                    onOpenExternal={onOpenExternal}
+                    controlGate={skill.controlGate}
+                    onOpenConfigGate={onOpenConfigGate}
+                  />
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+      {pageSize && pageCount > 1 ? (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-muted-foreground tabular-nums">
+            Showing {currentPage * pageSize + 1}-
+            {Math.min((currentPage + 1) * pageSize, skills.length)} of{" "}
+            {skills.length}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={currentPage === 0}
+              onClick={() => setPage((value) => Math.max(0, value - 1))}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={currentPage === pageCount - 1}
+              onClick={() =>
+                setPage((value) => Math.min(pageCount - 1, value + 1))
+              }
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -1837,22 +1926,10 @@ function AdvancedDiagnostics({
   open,
   onOpenChange,
   summary,
-  skills,
-  getSkillEnabled,
-  onStageChange,
-  onDetails,
-  onOpenExternal,
-  onOpenConfigGate,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   summary: SkillSummary
-  skills: ManagedSkill[]
-  getSkillEnabled: (skill: ManagedSkill) => boolean
-  onStageChange: (change: ConfigChange, currentEnabled: boolean) => void
-  onDetails: (detailId: string) => void
-  onOpenExternal: (detailId: string) => void
-  onOpenConfigGate: (gate: ControlGate) => void
 }) {
   return (
     <details
@@ -1862,79 +1939,57 @@ function AdvancedDiagnostics({
       className="rounded-lg border bg-muted/20"
     >
       <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
-        Advanced diagnostics and raw inventory
+        Advanced diagnostics
       </summary>
-      <div className="flex flex-col gap-5 border-t p-4">
-        <div className="grid gap-5 lg:grid-cols-2">
-          <section className="flex flex-col gap-3">
-            <div>
-              <h3 className="font-medium">Source coverage</h3>
-              <p className="text-sm text-pretty text-muted-foreground">
-                Where the current capability set was discovered.
-              </p>
-            </div>
-            {Object.entries(summary.sourceCounts).map(([label, count]) => (
-              <div key={label} className="flex flex-col gap-2">
-                <div className="flex items-center justify-between gap-3 text-sm">
-                  <span>{label}</span>
-                  <span className="text-muted-foreground tabular-nums">
-                    {count}
-                  </span>
-                </div>
-                <Progress
-                  value={summary.total ? (count / summary.total) * 100 : 0}
-                />
+      {open ? (
+        <div className="flex flex-col gap-5 border-t p-4">
+          <div className="grid gap-5 lg:grid-cols-2">
+            <section className="flex flex-col gap-3">
+              <div>
+                <h3 className="font-medium">Source coverage</h3>
+                <p className="text-sm text-pretty text-muted-foreground">
+                  Where the current capability set was discovered.
+                </p>
               </div>
-            ))}
-          </section>
-          <section className="flex flex-col gap-3">
-            <div>
-              <h3 className="font-medium">Scanned folders</h3>
-              <p className="text-sm text-pretty text-muted-foreground">
-                Read-only roots used to build this inventory.
+              {Object.entries(summary.sourceCounts).map(([label, count]) => (
+                <div key={label} className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span>{label}</span>
+                    <span className="text-muted-foreground tabular-nums">
+                      {count}
+                    </span>
+                  </div>
+                  <Progress
+                    value={summary.total ? (count / summary.total) * 100 : 0}
+                  />
+                </div>
+              ))}
+            </section>
+            <section className="flex flex-col gap-3">
+              <div>
+                <h3 className="font-medium">Scanned folders</h3>
+                <p className="text-sm text-pretty text-muted-foreground">
+                  Read-only roots used to build this inventory.
+                </p>
+              </div>
+              {summary.scannedRoots.map((root) => (
+                <code
+                  key={root}
+                  className="block rounded-md bg-background px-2 py-1 text-xs break-all text-muted-foreground"
+                >
+                  {root}
+                </code>
+              ))}
+              <p className="text-xs text-muted-foreground">
+                Last changed skill file:{" "}
+                <span className="font-medium text-foreground">
+                  {summary.newestModifiedAt}
+                </span>
               </p>
-            </div>
-            {summary.scannedRoots.map((root) => (
-              <code
-                key={root}
-                className="block rounded-md bg-background px-2 py-1 text-xs break-all text-muted-foreground"
-              >
-                {root}
-              </code>
-            ))}
-            <p className="text-xs text-muted-foreground">
-              Last changed skill file:{" "}
-              <span className="font-medium text-foreground">
-                {summary.newestModifiedAt}
-              </span>
-            </p>
-          </section>
-        </div>
-        <Separator />
-        <section className="flex min-w-0 flex-col gap-3">
-          <div>
-            <h3 className="font-medium text-balance">
-              Raw skill inventory{" "}
-              <span className="text-muted-foreground tabular-nums">
-                ({summary.total})
-              </span>
-            </h3>
-            <p className="text-sm text-pretty text-muted-foreground">
-              Technical inventory including parent ownership and local paths.
-            </p>
+            </section>
           </div>
-          <SkillTable
-            skills={skills}
-            emptyTitle="No skills match your search"
-            getSkillEnabled={getSkillEnabled}
-            onStageChange={onStageChange}
-            onDetails={onDetails}
-            onOpenExternal={onOpenExternal}
-            onOpenConfigGate={onOpenConfigGate}
-            showParent
-          />
-        </section>
-      </div>
+        </div>
+      ) : null}
     </details>
   )
 }
