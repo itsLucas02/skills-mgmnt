@@ -72,6 +72,7 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -542,17 +543,19 @@ export function SkillsManagementPage({
                         Advanced
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-56">
-                        <DropdownMenuLabel>Plugin display</DropdownMenuLabel>
-                        <DropdownMenuItem
-                          onClick={() => setAllPluginsCollapsed(false)}
-                        >
-                          <ChevronDownIcon /> Expand plugin bundles
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => setAllPluginsCollapsed(true)}
-                        >
-                          <ChevronRightIcon /> Collapse plugin bundles
-                        </DropdownMenuItem>
+                        <DropdownMenuGroup>
+                          <DropdownMenuLabel>Plugin display</DropdownMenuLabel>
+                          <DropdownMenuItem
+                            onClick={() => setAllPluginsCollapsed(false)}
+                          >
+                            <ChevronDownIcon /> Expand plugin bundles
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => setAllPluginsCollapsed(true)}
+                          >
+                            <ChevronRightIcon /> Collapse plugin bundles
+                          </DropdownMenuItem>
+                        </DropdownMenuGroup>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem onClick={showAdvancedDiagnostics}>
                           <FolderSearchIcon /> Show diagnostics
@@ -1910,7 +1913,12 @@ function AdvancedDiagnostics({
         <Separator />
         <section className="flex min-w-0 flex-col gap-3">
           <div>
-            <h3 className="font-medium">Raw skill inventory</h3>
+            <h3 className="font-medium text-balance">
+              Raw skill inventory{" "}
+              <span className="text-muted-foreground tabular-nums">
+                ({summary.total})
+              </span>
+            </h3>
             <p className="text-sm text-pretty text-muted-foreground">
               Technical inventory including parent ownership and local paths.
             </p>
