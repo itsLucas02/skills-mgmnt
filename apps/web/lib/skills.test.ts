@@ -87,3 +87,43 @@ test("marks skills disabled by Codex skill config blocks with TOML header spacin
   assert.equal(skill?.effectiveStatus, "disabled-by-skill")
   assert.equal(skill?.status, "disabled")
 })
+
+test("reuses the cached inventory until a scanned root changes", async () => {
+  const codexHome = mkdtempSync(path.join(tmpdir(), "skills-mgmnt-codex-"))
+  const agentsHome = mkdtempSync(path.join(tmpdir(), "skills-mgmnt-agents-"))
+  const skillPath = path.join(codexHome, "skills", "cache-check", "SKILL.md")
+
+  mkdirSync(path.dirname(skillPath), { recursive: true })
+  writeFileSync(
+    skillPath,
+    "---\nname: cache-check\ndescription: Cache check skill.\n---\n",
+    "utf8"
+  )
+
+  process.env.CODEX_HOME = codexHome
+  process.env.AGENTS_HOME = agentsHome
+
+  const { getCapabilityInventory, invalidateInventoryCache } = await import(
+    `./skills.ts?case=${Date.now()}`
+  ) as typeof import("./skills.ts")
+
+  const first = getCapabilityInventory()
+  const cached = getCapabilityInventory()
+  assert.equal(cached, first, "unchanged roots should return the cached inventory")
+
+  // Bump the skill folder mtime to invalidate the cache.
+  writeFileSync(
+    path.join(codexHome, "config.toml"),
+    `[[skills.config]]\npath = "${skillPath.replace(/\\/g, "\\\\")}"\nenabled = false\n`,
+    "utf8"
+  )
+
+  const refreshed = getCapabilityInventory()
+  assert.notEqual(refreshed, first, "config changes should invalidate the cache")
+  assert.equal(
+    refreshed.skills.find((item) => item.path === skillPath)?.effectiveStatus,
+    "disabled-by-skill"
+  )
+
+  invalidateInventoryCache()
+})

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server"
 import type { ConfigChange } from "@/lib/config-editor"
 import { applyConfigChanges } from "@/lib/config-editor"
 import { isLocalRequest } from "@/lib/local-request"
+import { invalidateInventoryCache } from "@/lib/skills"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -21,7 +22,9 @@ export async function POST(request: Request) {
   }
 
   try {
-    return NextResponse.json(applyConfigChanges(payload.changes))
+    const result = applyConfigChanges(payload.changes)
+    invalidateInventoryCache()
+    return NextResponse.json(result)
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Could not apply changes." },

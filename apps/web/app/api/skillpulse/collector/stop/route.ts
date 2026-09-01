@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server"
 
 import { isLocalRequest } from "@/lib/local-request"
-import { getSkillPulseCollectorStatus, writeSkillPulseCollectorStatus } from "@/lib/skillpulse"
+import {
+  getSkillPulseCollectorStatus,
+  isProcessAlive,
+  writeSkillPulseCollectorStatus,
+} from "@/lib/skillpulse"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -12,7 +16,7 @@ export function POST(request: Request) {
   }
 
   const status = getSkillPulseCollectorStatus()
-  if (status.pid && isProcessRunning(status.pid)) {
+  if (status.pid && isProcessAlive(status.pid)) {
     try {
       process.kill(status.pid)
     } catch {
@@ -29,13 +33,4 @@ export function POST(request: Request) {
   writeSkillPulseCollectorStatus(nextStatus)
 
   return NextResponse.json(nextStatus)
-}
-
-function isProcessRunning(pid: number) {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
-  }
 }

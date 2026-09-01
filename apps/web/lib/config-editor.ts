@@ -1,4 +1,11 @@
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs"
+import {
+  copyFileSync,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
 
@@ -18,16 +25,29 @@ export type ConfigChangePreview = ConfigChange & {
   summary: string
 }
 
-const HOME = homedir()
-const CODEX_HOME = process.env.CODEX_HOME ?? path.join(HOME, ".codex")
-export const CODEX_CONFIG_PATH = path.join(CODEX_HOME, "config.toml")
-const APPLY_STATE_PATH = path.join(CODEX_HOME, "skills-mgmnt-apply-state.json")
+export type AppliedConfigChanges = {
+  appliedAt: string
+  backupPath: string
+  preview: ConfigChangePreview[]
+}
 
-type ApplyState = {
+export type ApplyState = {
   lastAppliedAt?: string
   backupPath?: string
   restartRequired?: boolean
   restartDismissedAt?: string
+}
+
+function getCodexHome() {
+  return process.env.CODEX_HOME ?? path.join(homedir(), ".codex")
+}
+
+function getCodexConfigPath() {
+  return path.join(getCodexHome(), "config.toml")
+}
+
+function getApplyStatePath() {
+  return path.join(getCodexHome(), "skills-mgmnt-apply-state.json")
 }
 
 export function previewConfigChanges(changes: ConfigChange[]) {
@@ -44,17 +64,178 @@ export function previewConfigChanges(changes: ConfigChange[]) {
   })
 }
 
+export function previewConfigDiff(changes: ConfigChange[]) {
+  const configText = readConfigText()
+  const nextConfigText = normalizeChanges(changes).reduce(
+    (currentText, change) => applyChange(currentText, change),
+    configText
+  )
+
+  return diffLineRanges(configText, nextConfigText)
+}
+
+function diffLineRanges(before: string, after: string) {
+  const beforeLines = before.split(/\r?\n/)
+  const afterLines = after.split(/\r?\n/)
+  const diff: DiffEntry[] = []
+  let beforeIndex = 0
+  let afterIndex = 0
+
+  const pushContext = () => {
+    while (
+      beforeIndex < beforeLines.length &&
+      afterIndex < afterLines.length &&
+      beforeLines[beforeIndex] === afterLines[afterIndex]
+    ) {
+      diff.push({
+        kind: "context",
+        text: beforeLines[beforeIndex] ?? "",
+        beforeLine: beforeIndex + 1,
+        afterLine: afterIndex + 1,
+      })
+      beforeIndex += 1
+      afterIndex += 1
+    }
+  }
+
+  pushContext()
+
+  while (beforeIndex < beforeLines.length || afterIndex < afterLines.length) {
+    const beforeLine = beforeLines[beforeIndex]
+    const afterLine = afterLines[afterIndex]
+
+    if (
+      beforeLine !== undefined &&
+      afterLine !== undefined &&
+      beforeLine === afterLine
+    ) {
+      pushContext()
+      continue
+    }
+
+    // Prefer matching the next after-line against a nearby upcoming before
+    // line so reordered or rewritten blocks converge quickly.
+    if (beforeLine !== undefined && afterLine !== undefined) {
+      const matchOffset = beforeLines.indexOf(afterLine, beforeIndex + 1)
+
+      if (matchOffset !== -1 && matchOffset - beforeIndex <= 3) {
+        while (beforeIndex < matchOffset) {
+          diff.push({
+            kind: "removed",
+            text: beforeLines[beforeIndex] ?? "",
+            beforeLine: beforeIndex + 1,
+            afterLine: null,
+          })
+          beforeIndex += 1
+        }
+
+        pushContext()
+        continue
+      }
+    }
+
+    if (beforeLine !== undefined) {
+      diff.push({
+        kind: "removed",
+        text: beforeLine,
+        beforeLine: beforeIndex + 1,
+        afterLine: null,
+      })
+      beforeIndex += 1
+    }
+
+    if (afterLine !== undefined) {
+      diff.push({
+        kind: "added",
+        text: afterLine,
+        beforeLine: null,
+        afterLine: afterIndex + 1,
+      })
+      afterIndex += 1
+    }
+  }
+
+  return collapseDiffContext(diff)
+}
+
+type DiffEntry = {
+  kind: "added" | "removed" | "context"
+  text: string
+  beforeLine: number | null
+  afterLine: number | null
+}
+
+const DIFF_CONTEXT_LINES = 3
+
+function collapseDiffContext(diff: DiffEntry[]) {
+  const interestingIndexes = diff
+    .map((entry, index) => (entry.kind === "context" ? -1 : index))
+    .filter((index) => index >= 0)
+
+  if (!interestingIndexes.length) {
+    return []
+  }
+
+  const keep = new Set<number>()
+
+  for (const index of interestingIndexes) {
+    const start = Math.max(0, index - DIFF_CONTEXT_LINES)
+    const end = Math.min(diff.length - 1, index + DIFF_CONTEXT_LINES)
+
+    for (let offset = start; offset <= end; offset += 1) {
+      keep.add(offset)
+    }
+  }
+
+  const collapsed: DiffEntry[] = []
+  let previousKept = false
+  let index = 0
+
+  if (!keep.has(0)) {
+    collapsed.push({ kind: "context", text: "...", beforeLine: null, afterLine: null })
+  }
+
+  while (index < diff.length) {
+    if (keep.has(index)) {
+      collapsed.push(diff[index] as DiffEntry)
+      previousKept = true
+      index += 1
+      continue
+    }
+
+    if (previousKept) {
+      collapsed.push({ kind: "context", text: "...", beforeLine: null, afterLine: null })
+      previousKept = false
+    }
+
+    // Skip the entire unkept run in one step.
+    while (index < diff.length && !keep.has(index)) {
+      index += 1
+    }
+  }
+
+  return collapsed
+}
+
 export function applyConfigChanges(changes: ConfigChange[]) {
   const normalizedChanges = normalizeChanges(changes)
   const configText = readConfigText()
-  const preview = previewConfigChanges(normalizedChanges)
+  const preview = normalizedChanges.map((change) => {
+    const before = getCurrentEnabled(configText, change)
+    return {
+      ...change,
+      before,
+      after: change.enabled,
+      summary: `${labelForKind(change.kind)} ${change.label}: ${formatEnabled(before)} -> ${formatEnabled(change.enabled)}`,
+    } satisfies ConfigChangePreview
+  })
   const backupPath = createConfigBackup()
   const nextConfigText = normalizedChanges.reduce(
     (currentText, change) => applyChange(currentText, change),
     configText
   )
   validateConfigText(nextConfigText)
-  writeFileSync(CODEX_CONFIG_PATH, nextConfigText, "utf8")
+  writeFileSync(getCodexConfigPath(), nextConfigText, "utf8")
 
   const appliedAt = new Date().toISOString()
   writeApplyState({
@@ -71,12 +252,12 @@ export function applyConfigChanges(changes: ConfigChange[]) {
 }
 
 export function getApplyState(): ApplyState {
-  if (!existsSync(APPLY_STATE_PATH)) {
+  if (!existsSync(getApplyStatePath())) {
     return {}
   }
 
   try {
-    return JSON.parse(readFileSync(APPLY_STATE_PATH, "utf8")) as ApplyState
+    return JSON.parse(readFileSync(getApplyStatePath(), "utf8")) as ApplyState
   } catch {
     return {}
   }
@@ -101,18 +282,30 @@ function normalizeChanges(changes: ConfigChange[]) {
       continue
     }
 
+    if (change.kind === "plugin" || change.kind === "mcp") {
+      validateSectionTarget(change.target)
+    }
+
     deduped.set(change.id, change)
   }
 
   return [...deduped.values()]
 }
 
+function validateSectionTarget(target: string) {
+  if (/["\]\r\n]/.test(target)) {
+    throw new Error(
+      `Refusing to write invalid TOML: unsupported characters in config target "${target}".`
+    )
+  }
+}
+
 function readConfigText() {
-  if (!existsSync(CODEX_CONFIG_PATH)) {
-    throw new Error(`Codex config not found at ${CODEX_CONFIG_PATH}`)
+  if (!existsSync(getCodexConfigPath())) {
+    throw new Error(`Codex config not found at ${getCodexConfigPath()}`)
   }
 
-  return readFileSync(CODEX_CONFIG_PATH, "utf8")
+  return readFileSync(getCodexConfigPath(), "utf8")
 }
 
 function createConfigBackup() {
@@ -120,13 +313,36 @@ function createConfigBackup() {
     .toISOString()
     .replace(/[-:]/g, "")
     .replace(/\.\d{3}Z$/, "Z")
-  const backupPath = path.join(CODEX_HOME, `config.backup-${timestamp}.toml`)
-  copyFileSync(CODEX_CONFIG_PATH, backupPath)
+  const backupPath = path.join(getCodexHome(), `config.backup-${timestamp}.toml`)
+  copyFileSync(getCodexConfigPath(), backupPath)
+  pruneConfigBackups()
   return backupPath
 }
 
+const MAX_CONFIG_BACKUPS = 10
+
+function pruneConfigBackups() {
+  let backupFiles: string[]
+
+  try {
+    backupFiles = readdirSync(getCodexHome())
+      .filter((name) => /^config\.backup-.+\.toml$/.test(name))
+      .sort()
+  } catch {
+    return
+  }
+
+  for (const name of backupFiles.slice(0, Math.max(0, backupFiles.length - MAX_CONFIG_BACKUPS))) {
+    try {
+      unlinkSync(path.join(getCodexHome(), name))
+    } catch {
+      // A stale backup that cannot be removed is harmless; skip it.
+    }
+  }
+}
+
 function writeApplyState(state: ApplyState) {
-  writeFileSync(APPLY_STATE_PATH, `${JSON.stringify(state, null, 2)}\n`, "utf8")
+  writeFileSync(getApplyStatePath(), `${JSON.stringify(state, null, 2)}\n`, "utf8")
 }
 
 function getCurrentEnabled(configText: string, change: ConfigChange) {
@@ -269,6 +485,7 @@ function findSkillBlock(configText: string, skillPath: string) {
 
 function findSkillBlocks(configText: string, skillPath: string) {
   const blockPattern = /^\[\[skills\.config\]\]\s*$/gm
+  const normalizedSkillPath = normalizeConfigPath(skillPath)
   let match: RegExpExecArray | null
   const blocks: Array<{
     headerStart: number
@@ -286,7 +503,7 @@ function findSkillBlocks(configText: string, skillPath: string) {
     const body = configText.slice(bodyStart, bodyEnd)
     const pathMatch = body.match(/^\s*path\s*=\s*(.+)\s*$/m)
 
-    if (pathMatch && parseTomlString(pathMatch[1] ?? "") === skillPath) {
+    if (pathMatch && normalizeConfigPath(parseTomlString(pathMatch[1] ?? "")) === normalizedSkillPath) {
       blocks.push({
         headerStart,
         bodyStart,
@@ -298,6 +515,10 @@ function findSkillBlocks(configText: string, skillPath: string) {
   }
 
   return blocks
+}
+
+function normalizeConfigPath(filePath: string) {
+  return path.resolve(filePath).toLowerCase()
 }
 
 function setEnabledLine(body: string, enabledLine: string) {
@@ -369,6 +590,10 @@ function parseTomlString(value: string) {
 }
 
 function formatTomlString(value: string) {
+  if (/[\r\n]/.test(value)) {
+    throw new Error("Refusing to write invalid TOML: path contains line breaks.")
+  }
+
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
 }
 

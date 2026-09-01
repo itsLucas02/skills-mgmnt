@@ -174,7 +174,47 @@ export function getSkillInventory() {
   return getCapabilityInventory().skills
 }
 
+type CapabilityInventory = ReturnType<typeof scanCapabilityInventory>
+
+let cachedInventory: CapabilityInventory | null = null
+let cachedRootSignature: string | null = null
+
+export function invalidateInventoryCache() {
+  cachedInventory = null
+  cachedRootSignature = null
+}
+
 export function getCapabilityInventory() {
+  const signature = getRootSignature()
+
+  if (cachedInventory && signature === cachedRootSignature) {
+    return cachedInventory
+  }
+
+  const inventory = scanCapabilityInventory()
+  cachedInventory = inventory
+  cachedRootSignature = signature
+  return inventory
+}
+
+function getRootSignature() {
+  const signatureRoots: Array<{ path: string }> = [
+    ...SEARCH_ROOTS,
+    { path: CODEX_CONFIG_PATH },
+  ]
+
+  return signatureRoots
+    .map((root) => {
+      try {
+        return `${root.path}:${statSync(root.path).mtimeMs.toString()}`
+      } catch {
+        return `${root.path}:missing`
+      }
+    })
+    .join("|")
+}
+
+function scanCapabilityInventory() {
   const config = readCodexConfigState()
   const pluginMap = discoverPlugins(config)
   const skills: ManagedSkill[] = []
@@ -253,11 +293,73 @@ export function getSkillSummary(
   }
 }
 
+function getFastSkillDetail(decodedPath: string, detailId: string): SkillDetail | null {
+  // MCP servers from Codex config or plugin manifests have detail ids with
+  // #mcp: markers; those always resolve through the inventory scan.
+  if (decodeDetailId(detailId)?.includes("#mcp:")) {
+    return null
+  }
+
+  const parsed = parseSkillMarkdown(decodedPath)
+
+  if (parsed) {
+    const config = readCodexConfigState()
+    const pluginKey = getPluginKeyForSkillPath(decodedPath, discoverPlugins(config))
+    return {
+      kind: "skill",
+      title: parsed.name,
+      description: parsed.description,
+      status: "",
+      statusReason: "",
+      source: getSkillSourceLabel(decodedPath),
+      origin: {
+        label: getSkillSourceLabel(decodedPath),
+        confidence: "inferred",
+        detail: "Resolved directly from the local skill file.",
+      },
+      controlGate: {
+        type: "default",
+        label: "Default-enabled skill",
+        editable: false,
+        reason: "",
+      },
+      path: decodedPath,
+      relativePath: path.relative(HOME, decodedPath),
+      parentPluginKey: pluginKey ?? undefined,
+      metadata: [],
+      contentPreview: readPreview(decodedPath),
+    }
+  }
+
+  return null
+}
+
+function getSkillSourceLabel(skillPath: string) {
+  if (isInsidePath(path.join(CODEX_HOME, "skills"), skillPath)) {
+    return "Codex local"
+  }
+
+  if (isInsidePath(path.join(AGENTS_HOME, "skills"), skillPath)) {
+    return "Agent local"
+  }
+
+  if (isInsidePath(path.join(CODEX_HOME, "plugins", "cache"), skillPath)) {
+    return "Plugin cache"
+  }
+
+  return "Third party"
+}
+
 export function getSkillDetail(detailId: string): SkillDetail | null {
   const decodedPath = decodeFilePart(detailId)
 
   if (!decodedPath || !isSafeLocalPath(decodedPath)) {
     return null
+  }
+
+  const fastDetail = getFastSkillDetail(decodedPath, detailId)
+  if (fastDetail !== null) {
+    return fastDetail
   }
 
   const inventory = getCapabilityInventory()
@@ -513,6 +615,10 @@ function walkForSkillFiles(
     const entryPath = path.join(root, entry.name)
 
     if (entry.isDirectory()) {
+      if (entry.name === ".git" || entry.name === "node_modules") {
+        continue
+      }
+
       walkForSkillFiles(entryPath, source, files, config, pluginMap, pluginKeysWithSkills)
       continue
     }
@@ -522,7 +628,12 @@ function walkForSkillFiles(
     }
 
     const parsed = parseSkillMarkdown(entryPath)
-    const pluginKey = getPluginKeyForSkillPath(entryPath)
+
+    if (!parsed) {
+      continue
+    }
+
+    const pluginKey = getPluginKeyForSkillPath(entryPath, pluginMap)
     const parentPlugin = pluginKey ? pluginMap.get(pluginKey) : undefined
     const status = getSkillStatus(entryPath, config, parentPlugin)
     const origin = parentPlugin?.origin ?? getSkillOrigin(entryPath, source)
@@ -558,7 +669,14 @@ function walkForSkillFiles(
 }
 
 function parseSkillMarkdown(filePath: string) {
-  const content = readFileSync(filePath, "utf8")
+  let content: string
+
+  try {
+    content = readFileSync(filePath, "utf8")
+  } catch {
+    return null
+  }
+
   const frontMatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
   const block = frontMatter?.[1] ?? ""
   const titleMatch = content.match(/^#\s+(.+)$/m)
@@ -942,15 +1060,20 @@ function countPluginMcpServers(pluginPath: string) {
   return mcpConfig?.mcpServers ? Object.keys(mcpConfig.mcpServers).length : 0
 }
 
-function getPluginKeyForSkillPath(skillPath: string) {
+export function getPluginKeyForSkillPath(skillPath: string, pluginMap?: Map<string, ManagedPlugin>) {
   const pluginCacheRoot = path.join(CODEX_HOME, "plugins", "cache")
   const marketplaceRoot = path.join(CODEX_HOME, ".tmp", "marketplaces")
 
   const pluginCacheRelative = path.relative(pluginCacheRoot, skillPath)
 
   if (!pluginCacheRelative.startsWith("..") && !path.isAbsolute(pluginCacheRelative)) {
-    const [marketplace, plugin] = pluginCacheRelative.split(path.sep)
-    return marketplace && plugin ? `${plugin}@${marketplace}` : null
+    const [marketplace, pluginDir] = pluginCacheRelative.split(path.sep)
+    if (!marketplace || !pluginDir) {
+      return null
+    }
+
+    const pluginKey = `${pluginDir}@${marketplace}`
+    return resolvePluginKey(pluginKey, pluginDir, marketplace, pluginMap)
   }
 
   const marketplaceRelative = path.relative(marketplaceRoot, skillPath)
@@ -958,20 +1081,57 @@ function getPluginKeyForSkillPath(skillPath: string) {
   if (!marketplaceRelative.startsWith("..") && !path.isAbsolute(marketplaceRelative)) {
     const parts = marketplaceRelative.split(path.sep)
     const marketplace = parts[0]
-    const plugin = parts[1] === "plugins" ? parts[2] : marketplace
-    return marketplace && plugin ? `${plugin}@${marketplace}` : null
+    const pluginDir = parts[1] === "plugins" ? parts[2] : parts[1]
+    if (!marketplace || !pluginDir) {
+      return null
+    }
+
+    const pluginKey = `${pluginDir}@${marketplace}`
+    return resolvePluginKey(pluginKey, pluginDir, marketplace, pluginMap)
   }
 
   return null
 }
 
+function resolvePluginKey(
+  directoryKey: string,
+  pluginDir: string,
+  marketplace: string,
+  pluginMap?: Map<string, ManagedPlugin>
+) {
+  if (!pluginMap || pluginMap.has(directoryKey)) {
+    return directoryKey
+  }
+
+  // Plugin keys derive from plugin.json "name", which can differ from the
+  // directory name. Fall back to matching the plugin whose path contains the
+  // skill's directory path segment under the same marketplace.
+  for (const [key, plugin] of pluginMap) {
+    if (
+      plugin.marketplace === marketplace &&
+      path.basename(plugin.path) === pluginDir
+    ) {
+      return key
+    }
+  }
+
+  return directoryKey
+}
+
 function getNewestModifiedAt(skills: ManagedSkill[]) {
   const latest = skills.reduce<number | null>((newest, skill) => {
-    const modified = statSync(skill.path).mtimeMs
+    let modified: number
+
+    try {
+      modified = statSync(skill.path).mtimeMs
+    } catch {
+      return newest
+    }
+
     return newest === null || modified > newest ? modified : newest
   }, null)
 
-  return latest ? new Date(latest).toLocaleString("en-MY") : "No skills found"
+  return latest ? new Date(latest).toLocaleString() : "No skills found"
 }
 
 function readJson<T>(filePath: string) {

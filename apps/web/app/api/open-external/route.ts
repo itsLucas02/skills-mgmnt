@@ -49,7 +49,7 @@ export async function POST(request: Request) {
 
   return NextResponse.json(
     {
-      error: "Could not open target in Windows Explorer, Antigravity, VS Code, or Cursor.",
+      error: "Could not open the target in Explorer, Antigravity, VS Code, Cursor, or the system opener.",
       details: failures.join("\n"),
     },
     { status: 500 }

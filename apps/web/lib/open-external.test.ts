@@ -51,3 +51,30 @@ test("builds explorer candidate before editor fallbacks", () => {
 test("defaults missing target lines to one", () => {
   assert.equal(getTargetLine(undefined), 1)
 })
+
+test("builds unix candidates on non-windows platforms", () => {
+  const candidates = getOpenCommandCandidates(
+    "/home/user/.codex/skills/example/SKILL.md",
+    3,
+    {},
+    "linux"
+  )
+
+  assert.deepEqual(candidates, [
+    {
+      name: "code",
+      command: "code",
+      args: ["--reuse-window", "--goto", "/home/user/.codex/skills/example/SKILL.md:3"],
+    },
+    {
+      name: "wslview",
+      command: "wslview",
+      args: ["/home/user/.codex/skills/example/SKILL.md"],
+    },
+    {
+      name: "xdg-open",
+      command: "xdg-open",
+      args: ["/home/user/.codex/skills/example/SKILL.md"],
+    },
+  ])
+})

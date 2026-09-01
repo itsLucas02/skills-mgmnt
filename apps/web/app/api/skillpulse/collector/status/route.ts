@@ -11,26 +11,13 @@ export function GET(request: Request) {
     return NextResponse.json({ error: "Local-only endpoint." }, { status: 403 })
   }
 
-  const status = getSkillPulseCollectorStatus()
-  const collectorRunning = status.pid ? isProcessRunning(status.pid) : false
-  const nextStatus = {
-    ...status,
-    collectorRunning,
-    enabled: collectorRunning ? true : status.enabled,
-  }
+  // getSkillPulseCollectorStatus already verifies PID liveness and reconciles
+  // the stored collectorRunning flag, so the persisted status is current.
+  const nextStatus = getSkillPulseCollectorStatus()
 
-  if (nextStatus.collectorRunning !== status.collectorRunning) {
+  if (nextStatus.collectorRunning) {
     writeSkillPulseCollectorStatus(nextStatus)
   }
 
   return NextResponse.json(nextStatus)
-}
-
-function isProcessRunning(pid: number) {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
-  }
 }

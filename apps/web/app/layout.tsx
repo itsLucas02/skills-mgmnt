@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { Geist_Mono, Public_Sans, Merriweather } from "next/font/google"
 
 import "@workspace/ui/globals.css"
@@ -12,6 +13,13 @@ const fontMono = Geist_Mono({
   subsets: ["latin"],
   variable: "--font-mono",
 })
+
+export const metadata: Metadata = {
+  title: "Skills Management",
+  description:
+    "Local-first dashboard for inspecting and controlling Codex skills, plugin bundles, and MCP servers.",
+  robots: "noindex, nofollow",
+}
 
 export default function RootLayout({
   children,

@@ -9,14 +9,20 @@ type OpenCommandEnv = {
   ProgramFiles?: string
   "ProgramFiles(x86)"?: string
   WINDIR?: string
+  WSLENV?: string
   [key: string]: string | undefined
 }
 
 export function getOpenCommandCandidates(
   targetPath: string,
   line: number,
-  env: OpenCommandEnv = process.env
+  env: OpenCommandEnv = process.env,
+  platform: NodeJS.Platform = process.platform
 ): OpenCommandCandidate[] {
+  if (platform !== "win32") {
+    return getUnixOpenCommandCandidates(targetPath, line)
+  }
+
   const targetWithLine = `${targetPath}:${line}`
   const localAppData = env.LOCALAPPDATA
   const programFiles = env.ProgramFiles
@@ -76,6 +82,29 @@ export function getOpenCommandCandidates(
   }
 
   return candidates
+}
+
+function getUnixOpenCommandCandidates(
+  targetPath: string,
+  line: number
+): OpenCommandCandidate[] {
+  return [
+    {
+      name: "code",
+      command: "code",
+      args: ["--reuse-window", "--goto", `${targetPath}:${line}`],
+    },
+    {
+      name: "wslview",
+      command: "wslview",
+      args: [targetPath],
+    },
+    {
+      name: "xdg-open",
+      command: "xdg-open",
+      args: [targetPath],
+    },
+  ]
 }
 
 export function getTargetLine(line: number | undefined) {

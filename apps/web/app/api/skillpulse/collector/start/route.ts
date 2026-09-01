@@ -6,7 +6,11 @@ import { spawn } from "node:child_process"
 import { NextResponse } from "next/server"
 
 import { isLocalRequest } from "@/lib/local-request"
-import { getSkillPulseCollectorStatus, writeSkillPulseCollectorStatus } from "@/lib/skillpulse"
+import {
+  getSkillPulseCollectorStatus,
+  isProcessAlive,
+  writeSkillPulseCollectorStatus,
+} from "@/lib/skillpulse"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -17,7 +21,7 @@ export function POST(request: Request) {
   }
 
   const currentStatus = getSkillPulseCollectorStatus()
-  if (currentStatus.pid && isProcessRunning(currentStatus.pid)) {
+  if (currentStatus.pid && isProcessAlive(currentStatus.pid)) {
     return NextResponse.json({
       ...currentStatus,
       enabled: true,
@@ -63,13 +67,4 @@ function getCollectorScriptPath() {
   ]
 
   return candidates.find((candidate) => existsSync(candidate)) ?? null
-}
-
-function isProcessRunning(pid: number) {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
-  }
 }

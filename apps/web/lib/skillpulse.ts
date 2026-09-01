@@ -107,8 +107,8 @@ export function syncSkillPulseUsage({
 
   const syncedAt = now.toISOString()
   const eventsPath = getEventsPath(codexHome)
-  const previousEvents = readSkillPulseEvents(codexHome)
-  const seenEventIds = new Set(previousEvents.map((event) => event.id))
+  const previousEventCount = countSkillPulseEvents(codexHome)
+  const seenEventIds = readSeenEventIds(codexHome)
   const state = mode === "backfill-all" ? createEmptyOffsetState() : readOffsetState(codexHome)
   const sessionFiles = getSessionFiles(codexHome)
   const newEvents: SkillPulseEvent[] = []
@@ -165,6 +165,8 @@ export function syncSkillPulseUsage({
     )
   }
 
+  const totalEventCount = rotateEventsFileIfNeeded(codexHome, previousEventCount + newEvents.length)
+
   state.lastSyncAt = syncedAt
   writeJson(getOffsetsPath(codexHome), state)
 
@@ -174,8 +176,73 @@ export function syncSkillPulseUsage({
     processedFileCount,
     scannedLineCount,
     newEventCount: newEvents.length,
-    totalEventCount: previousEvents.length + newEvents.length,
+    totalEventCount,
   }
+}
+
+const MAX_EVENTS_BEFORE_ROTATION = 5000
+const ROTATION_KEPT_EVENTS = 2500
+const ROTATION_ARCHIVE_PREFIX = "events.archived-"
+
+function countSkillPulseEvents(codexHome: string) {
+  const eventsPath = getEventsPath(codexHome)
+
+  if (!existsSync(eventsPath)) {
+    return 0
+  }
+
+  let count = 0
+
+  for (const line of readFileSync(eventsPath, "utf8").split(/\r?\n/)) {
+    if (line.trim()) {
+      count += 1
+    }
+  }
+
+  return count
+}
+
+function readSeenEventIds(codexHome: string) {
+  const eventsPath = getEventsPath(codexHome)
+
+  if (!existsSync(eventsPath)) {
+    return new Set<string>()
+  }
+
+  const ids = new Set<string>()
+
+  for (const line of readFileSync(eventsPath, "utf8").split(/\r?\n/)) {
+    if (!line.trim()) {
+      continue
+    }
+
+    const parsed = parseJsonObject(line)
+    if (typeof parsed?.id === "string") {
+      ids.add(parsed.id)
+    }
+  }
+
+  return ids
+}
+
+function rotateEventsFileIfNeeded(codexHome: string, totalEventCount: number) {
+  if (totalEventCount < MAX_EVENTS_BEFORE_ROTATION) {
+    return totalEventCount
+  }
+
+  const eventsPath = getEventsPath(codexHome)
+  const events = readSkillPulseEvents(codexHome)
+  const keptEvents = events.slice(-ROTATION_KEPT_EVENTS)
+  const archivedEvents = events.slice(0, events.length - keptEvents.length)
+  const archivePath = path.join(
+    getSkillPulseDir(codexHome),
+    `${ROTATION_ARCHIVE_PREFIX}${new Date().toISOString().replace(/[:.]/g, "-")}.jsonl`
+  )
+
+  writeFileSync(archivePath, `${archivedEvents.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8")
+  writeFileSync(eventsPath, keptEvents.length ? `${keptEvents.map((event) => JSON.stringify(event)).join("\n")}\n` : "", "utf8")
+
+  return keptEvents.length
 }
 
 export function getSkillPulseSummary({
@@ -225,11 +292,24 @@ export function aggregateSkillPulseUsage({
 
   for (const event of events) {
     const key = normalizePath(event.skillPath)
-    bySkillPath.set(key, [...(bySkillPath.get(key) ?? []), event])
+    const pathEvents = bySkillPath.get(key)
+
+    if (pathEvents) {
+      pathEvents.push(event)
+    } else {
+      bySkillPath.set(key, [event])
+    }
 
     const stableKey = getStableSkillUsageKey(event.skillPath, event.skillName)
+
     if (stableKey) {
-      byStableSkillKey.set(stableKey, [...(byStableSkillKey.get(stableKey) ?? []), event])
+      const stableEvents = byStableSkillKey.get(stableKey)
+
+      if (stableEvents) {
+        stableEvents.push(event)
+      } else {
+        byStableSkillKey.set(stableKey, [event])
+      }
     }
   }
 
@@ -349,15 +429,30 @@ export function getSkillPulseCollectorStatus(codexHome = CODEX_HOME): SkillPulse
     return getDefaultCollectorStatus()
   }
 
+  const pid = typeof status.pid === "number" ? status.pid : undefined
+  const collectorRunning =
+    Boolean(status.collectorRunning) && pid !== undefined
+      ? isProcessAlive(pid)
+      : Boolean(status.collectorRunning)
+
   return {
     enabled: Boolean(status.enabled),
-    collectorRunning: Boolean(status.collectorRunning),
-    pid: typeof status.pid === "number" ? status.pid : undefined,
+    collectorRunning,
+    pid,
     startedAt: typeof status.startedAt === "string" ? status.startedAt : undefined,
     stoppedAt: typeof status.stoppedAt === "string" ? status.stoppedAt : undefined,
     lastHeartbeatAt: typeof status.lastHeartbeatAt === "string" ? status.lastHeartbeatAt : undefined,
     lastSyncAt: typeof status.lastSyncAt === "string" ? status.lastSyncAt : undefined,
     lastError: typeof status.lastError === "string" ? status.lastError : undefined,
+  }
+}
+
+export function isProcessAlive(pid: number) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -594,7 +689,17 @@ function createEmptyOffsetState(): SkillPulseOffsetState {
 }
 
 function ensureSkillPulseDir(codexHome: string) {
-  mkdirSync(getSkillPulsePaths(codexHome).skillPulseDir, { recursive: true })
+  return getSkillPulseDir(codexHome)
+}
+
+function getSkillPulseDir(codexHome: string) {
+  const skillPulseDir = path.join(codexHome, SKILLPULSE_DIR_NAME)
+
+  if (!existsSync(skillPulseDir)) {
+    mkdirSync(skillPulseDir, { recursive: true })
+  }
+
+  return skillPulseDir
 }
 
 function getEventsPath(codexHome: string) {
