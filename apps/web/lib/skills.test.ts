@@ -4,6 +4,24 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import test from "node:test"
 
+test("plugin backups and staging folders do not count as installed skills or plugins", async () => {
+  const codexHome = mkdtempSync(path.join(tmpdir(), "skills-archive-fixture-"))
+  const agentsHome = mkdtempSync(path.join(tmpdir(), "skills-archive-agents-"))
+  for (const directory of ["active", "plugin-backup-fixture", "marketplace-backup-fixture", ".staging"]) {
+    const root = path.join(codexHome, "plugins", "cache", directory, "plugin", "1")
+    mkdirSync(path.join(root, ".codex-plugin"), { recursive: true })
+    mkdirSync(path.join(root, "skills", "example"), { recursive: true })
+    writeFileSync(path.join(root, ".codex-plugin", "plugin.json"), JSON.stringify({ name: "fixture-plugin" }))
+    writeFileSync(path.join(root, "skills", "example", "SKILL.md"), "---\nname: example\ndescription: Example\n---\n")
+  }
+  process.env.CODEX_HOME = codexHome; process.env.AGENTS_HOME = agentsHome
+  const { getCapabilityInventory } = await import(`./skills.ts?archive=${Date.now()}`) as typeof import("./skills.ts")
+  const inventory = getCapabilityInventory()
+  assert.equal(inventory.skills.length, 1)
+  assert.equal(inventory.plugins.length, 1)
+  assert.equal(inventory.plugins[0]?.marketplace, "active")
+})
+
 test("marks skills disabled by Codex [[skills.config]] blocks", async () => {
   const codexHome = mkdtempSync(path.join(tmpdir(), "skills-mgmnt-codex-"))
   const agentsHome = mkdtempSync(path.join(tmpdir(), "skills-mgmnt-agents-"))

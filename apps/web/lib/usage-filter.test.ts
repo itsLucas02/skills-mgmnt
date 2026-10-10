@@ -16,7 +16,10 @@ function createUsageSkill(overrides: Partial<UsageSkill> = {}): UsageSkill {
     effectiveStatus: "active",
     loads7d: 0,
     loads30d: 0,
+    loads90d: 0,
     loadsAllTime: 0,
+    byHarness: {},
+    daysSinceLastUse: null,
     recommendation: "disable-candidate",
     ...overrides,
   }
@@ -40,21 +43,23 @@ test("matches factual unused windows without including disabled skills", () => {
 })
 
 test("distinguishes never-observed skills from skills unused for ninety days", () => {
-  const now = new Date("2026-07-14T00:00:00.000Z").getTime()
   const neverObserved = createUsageSkill()
   const oldUsage = createUsageSkill({
     loadsAllTime: 3,
+    loads90d: 0,
     lastLoadedAt: "2026-03-01T00:00:00.000Z",
   })
   const recentUsage = createUsageSkill({
     loadsAllTime: 3,
+    loads30d: 1,
+    loads90d: 4,
     lastLoadedAt: "2026-07-01T00:00:00.000Z",
   })
 
-  assert.equal(matchesUsageFilter(neverObserved, "never", now), true)
-  assert.equal(matchesUsageFilter(oldUsage, "never", now), false)
-  assert.equal(matchesUsageFilter(oldUsage, "90d", now), true)
-  assert.equal(matchesUsageFilter(recentUsage, "90d", now), false)
+  assert.equal(matchesUsageFilter(neverObserved, "never"), true)
+  assert.equal(matchesUsageFilter(oldUsage, "never"), false)
+  assert.equal(matchesUsageFilter(oldUsage, "90d"), true)
+  assert.equal(matchesUsageFilter(recentUsage, "90d"), false)
 })
 
 test("describes every filter with the selected time window", () => {

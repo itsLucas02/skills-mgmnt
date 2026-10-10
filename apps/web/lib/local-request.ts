@@ -1,7 +1,13 @@
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"])
 
 export function isLocalRequest(request: Request) {
-  return isLocalHostHeader(request.headers.get("host"))
+  if (!isLocalHostHeader(request.headers.get("host"))) return false
+  const origin = request.headers.get("origin")
+  if (origin) {
+    try { if (new URL(origin).host !== request.headers.get("host")) return false }
+    catch { return false }
+  }
+  return request.headers.get("sec-fetch-site") !== "cross-site"
 }
 
 export function isLocalHostHeader(hostHeader: string | null) {

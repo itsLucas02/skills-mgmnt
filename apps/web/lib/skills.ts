@@ -6,6 +6,9 @@ import {
 } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
+import { formatDateTime } from "./date-format.ts"
+import { actualSkillPath, isolationEntries, isolationLeaks } from "./skill-isolation.ts"
+import { provenanceFor, type SkillProvenance } from "./skill-provenance.ts"
 
 export type SkillSource =
   | "Codex local"
@@ -40,6 +43,8 @@ export type EffectiveStatus =
   | "installed-not-loaded"
 
 export type ManagedSkill = {
+  isolated?: boolean
+  provenance?: SkillProvenance
   id: string
   detailId: string
   name: string
@@ -201,6 +206,8 @@ function getRootSignature() {
   const signatureRoots: Array<{ path: string }> = [
     ...SEARCH_ROOTS,
     { path: CODEX_CONFIG_PATH },
+    { path: path.join(AGENTS_HOME, ".skill-lock.json") },
+    { path: path.join(AGENTS_HOME, "registry", "skill-isolation.json") },
   ]
 
   return signatureRoots
@@ -222,6 +229,28 @@ function scanCapabilityInventory() {
 
   for (const root of SEARCH_ROOTS) {
     walkForSkillFiles(root.path, root.source, skills, config, pluginMap, pluginKeysWithSkills)
+  }
+  for (const entry of isolationEntries()) {
+    if (!existsSync(path.join(entry.stored, "SKILL.md"))) throw new Error(`Isolated skill storage is missing: ${entry.stored}`)
+    const isolated: ManagedSkill[] = []
+    walkForSkillFiles(entry.stored, "Agent local", isolated, config, pluginMap, pluginKeysWithSkills)
+    for (const skill of isolated) {
+      skill.path = path.join(entry.original, "SKILL.md")
+      skill.id = skill.path
+      skill.detailId = encodeDetailId(skill.path)
+      skill.relativePath = path.relative(HOME, skill.path)
+      skill.status = "disabled"
+      skill.effectiveStatus = "disabled-by-skill"
+      skill.statusReason = "Isolated outside discovery roots; new agent sessions required."
+      const leaks = isolationLeaks(entry)
+      skill.isolated = leaks.length === 0
+      if (leaks.length) skill.statusReason = `Isolation incomplete: discoverable copy/adapters at ${leaks.join(", ")}`
+      skill.editable = true
+      skill.provenance = provenanceFor(skill.path)
+      const existingIndex = skills.findIndex(s => s.path === skill.path)
+      if (existingIndex >= 0) skills[existingIndex] = skill
+      else skills.push(skill)
+    }
   }
 
   for (const [key, plugin] of pluginMap) {
@@ -300,34 +329,40 @@ function getFastSkillDetail(decodedPath: string, detailId: string): SkillDetail 
     return null
   }
 
-  const parsed = parseSkillMarkdown(decodedPath)
+  const parsed = parseSkillMarkdown(actualSkillPath(decodedPath))
 
   if (parsed) {
     const config = readCodexConfigState()
-    const pluginKey = getPluginKeyForSkillPath(decodedPath, discoverPlugins(config))
+    const plugins = discoverPlugins(config)
+    const pluginKey = getPluginKeyForSkillPath(decodedPath, plugins)
+    const parent = pluginKey ? plugins.get(pluginKey) : undefined
+    const status = getSkillStatus(decodedPath, config, parent)
+    const isolated = isolationEntries().find(e => path.join(e.original, "SKILL.md") === decodedPath)
+    const leaks = isolated ? isolationLeaks(isolated) : []
     return {
       kind: "skill",
       title: parsed.name,
       description: parsed.description,
-      status: "",
-      statusReason: "",
+      status: isolated ? leaks.length ? "Isolation incomplete" : "Isolated" : formatStatus(status.effectiveStatus),
+      statusReason: isolated ? leaks.length ? `Discoverable copies: ${leaks.join(", ")}` : "Stored outside normal discovery roots." : status.reason,
       source: getSkillSourceLabel(decodedPath),
       origin: {
         label: getSkillSourceLabel(decodedPath),
         confidence: "inferred",
         detail: "Resolved directly from the local skill file.",
       },
-      controlGate: {
-        type: "default",
-        label: "Default-enabled skill",
-        editable: false,
-        reason: "",
-      },
+      controlGate: getSkillControlGate(decodedPath, status.effectiveStatus, config, parent),
       path: decodedPath,
       relativePath: path.relative(HOME, decodedPath),
       parentPluginKey: pluginKey ?? undefined,
-      metadata: [],
-      contentPreview: readPreview(decodedPath),
+      metadata: [
+        { label: "Declared author", value: provenanceFor(decodedPath).author ?? "Not declared" },
+        { label: "Plugin publisher", value: provenanceFor(decodedPath).publisher ?? "Not applicable / not declared" },
+        { label: "Source evidence", value: provenanceFor(decodedPath).evidence ?? "Not recorded" },
+        { label: "Repository owner", value: provenanceFor(decodedPath).owner ?? "Unknown" },
+        { label: "Upstream", value: provenanceFor(decodedPath).sourceUrl ?? "Unknown / provider-managed" },
+      ],
+      contentPreview: readPreview(actualSkillPath(decodedPath)),
     }
   }
 
@@ -537,6 +572,7 @@ function findPluginMetadataFiles(root: string) {
       if (!entry.isDirectory()) {
         continue
       }
+      if (isPluginArchive(entry.name)) continue
 
       const metadataPath = path.join(entryPath, ".codex-plugin", "plugin.json")
 
@@ -555,6 +591,9 @@ function findPluginMetadataFiles(root: string) {
 
   walk(root)
   return metadataFiles
+}
+function isPluginArchive(name: string) {
+  return name === ".staging" || name.startsWith("plugin-backup-") || name.startsWith("marketplace-backup-")
 }
 
 function createManagedPlugin(
@@ -615,6 +654,7 @@ function walkForSkillFiles(
     const entryPath = path.join(root, entry.name)
 
     if (entry.isDirectory()) {
+      if ((source === "Plugin cache" || source === "Third party") && isPluginArchive(entry.name)) continue
       if (entry.name === ".git" || entry.name === "node_modules") {
         continue
       }
@@ -639,6 +679,7 @@ function walkForSkillFiles(
     const origin = parentPlugin?.origin ?? getSkillOrigin(entryPath, source)
     const controlGate = getSkillControlGate(entryPath, status.effectiveStatus, config, parentPlugin)
     const skill: ManagedSkill = {
+      provenance: provenanceFor(entryPath),
       id: entryPath,
       detailId: encodeDetailId(entryPath),
       name: parsed.name,
@@ -730,7 +771,7 @@ function getSkillStatus(
   if (config.disabledSkillPaths.has(normalizedPath)) {
     return {
       effectiveStatus: "disabled-by-skill" as const,
-      reason: "Disabled by [[skills.config]] in Codex config",
+      reason: "Disabled in Codex configuration only; files remain discoverable to other harnesses.",
     }
   }
 
@@ -1131,7 +1172,7 @@ function getNewestModifiedAt(skills: ManagedSkill[]) {
     return newest === null || modified > newest ? modified : newest
   }, null)
 
-  return latest ? new Date(latest).toLocaleString() : "No skills found"
+  return latest ? formatDateTime(new Date(latest).toISOString()) : "No skills found"
 }
 
 function readJson<T>(filePath: string) {
@@ -1231,7 +1272,7 @@ export function getOpenableTarget(detailId: string) {
   }
 
   return {
-    path: decodedPath,
+    path: actualSkillPath(decodedPath),
     line: decodeLinePart(detailId),
   }
 }

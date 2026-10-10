@@ -17,9 +17,14 @@ Built primarily for Codex configuration and usage tracking. This is an independe
 - **Keep history:** the permanent SkillPulse ledger preserves usage counts when recent event logs rotate.
 - **Recover mistakes:** supported standalone skills can be moved to local trash and restored.
 - **Inspect source:** preview SKILL.md and open the associated local file or configuration.
+- **Trace contributors:** compare declared authors with repository owners, filter sources, and export deduplicated attribution.
+- **Isolate disabled skills:** supported owner-managed `.agents/skills` folders and recorded provider copies move outside discovery roots; enable restores them. Provider-native controls remain configuration-only. Start fresh agent sessions after applying changes.
+- **Check updates manually:** Sources & updates checks selected/all skills only when clicked. Review content and upstream license/dependency context before applying; backups and provenance are retained. Unknown baselines and local edits are excluded from bulk apply.
 - **Export usage:** download CSV reports. Displayed dates use DD/MM/YYYY and Malaysia time (UTC+8).
 
 Zero recorded usage means the tracker has not observed a load; it does not prove a skill was never used. Nothing is disabled automatically.
+
+Scheduled usage scans use a hidden Windows launcher. They do not check upstream updates. See [local implementation status](docs/IMPLEMENTATION-STATUS.md) for verification and current limitations.
 
 ## Quick start
 

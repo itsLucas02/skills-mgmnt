@@ -1,5 +1,7 @@
 "use client"
 
+export { formatDateTime } from "../../lib/date-format.ts"
+
 import type { ReactElement } from "react"
 import {
   CheckCircle2Icon,
@@ -349,7 +351,7 @@ export function EffectiveStatusControl({
           ? "Plugin disabled"
           : active
             ? "Active"
-            : "Skill disabled"}
+            : skill.isolated ? "Isolated" : "Codex only"}
       </Badge>
     </div>
   )
@@ -412,8 +414,4 @@ export function formatControlGateLabel(gate: ControlGate) {
   }
 
   return `${gate.label}: ${gate.reason}`
-}
-
-export function formatDateTime(value: string) {
-  return new Date(value).toLocaleString()
 }

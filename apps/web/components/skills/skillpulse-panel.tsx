@@ -12,13 +12,18 @@ import type { ConfigChange } from "@/lib/config-editor"
 import { buildSkillPulseCsv } from "@/lib/csv-export"
 import type {
   SkillPulseSummaryResponse,
-  SkillPulseSyncResult,
 } from "@/lib/skillpulse"
 import {
   getUsageFilterDescription,
   matchesUsageFilter,
   type UsageFilter,
 } from "@/lib/usage-filter"
+import {
+  IMMATURE_LABEL,
+  IMMATURE_NOTE,
+  PROVEN_VALUE_USES,
+  SKILL_MATURITY_DAYS,
+} from "@/lib/skill-maturity"
 import type { ManagedSkill } from "@/lib/skills"
 import { getCompactPathLabel } from "@/lib/path-display"
 import { Badge } from "@workspace/ui/components/badge"
@@ -31,13 +36,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@workspace/ui/components/card"
-import { Switch } from "@workspace/ui/components/switch"
 
 import {
   EmptyState,
   Metric,
   PaginationFooter,
-  StatusBadge,
   formatDateTime,
   getBaseSkillEnabled,
   getSkillChangeId,
@@ -47,27 +50,20 @@ import {
 export function SkillPulsePanel({
   summary,
   loading,
-  syncing,
-  collectorAction,
-  lastSync,
+  scanning,
   skillByUsagePath,
   getSkillEnabled,
-  onSync,
-  onCollectorAction,
+  onScan,
   onStageChange,
 }: {
   summary: SkillPulseSummaryResponse | null
   loading: boolean
-  syncing: "incremental" | "backfill-all" | null
-  collectorAction: "start" | "stop" | null
-  lastSync: SkillPulseSyncResult | null
+  scanning: "incremental" | "backfill-all" | null
   skillByUsagePath: Map<string, ManagedSkill>
   getSkillEnabled: (skill: ManagedSkill) => boolean
-  onSync: (mode: "incremental" | "backfill-all") => void
-  onCollectorAction: (action: "start" | "stop") => void
+  onScan: (mode: "incremental" | "backfill-all") => void
   onStageChange: (change: ConfigChange, currentEnabled: boolean) => void
 }) {
-  const collectorRunning = Boolean(summary?.status.collectorRunning)
   const skills = useMemo(() => summary?.skills ?? [], [summary?.skills])
   const [usageFilter, setUsageFilter] = useState<UsageFilter>("30d")
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(
@@ -151,47 +147,67 @@ export function SkillPulsePanel({
           <Button
             variant="outline"
             size="sm"
-            disabled={Boolean(syncing)}
-            onClick={() => onSync("incremental")}
+            disabled={Boolean(scanning)}
+            onClick={() => onScan("incremental")}
           >
-            <RefreshCwIcon data-icon="inline-start" />
-            {syncing === "incremental" ? "Updating usage" : "Update usage now"}
+            <RefreshCwIcon data-icon="inline-start" className={scanning ? "motion-safe:animate-spin" : undefined} />
+            {scanning === "incremental" ? "Scanning" : "Scan now"}
           </Button>
         </CardAction>
       </CardHeader>
       <CardContent className="flex min-w-0 flex-col gap-5">
-        <div className="flex flex-col gap-4 rounded-lg border bg-muted/20 p-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-4 rounded-lg border bg-muted/20 p-4">
           <div className="flex min-w-0 items-start gap-3">
             <ActivityIcon className="mt-0.5 size-5 text-muted-foreground" />
             <div className="flex min-w-0 flex-col gap-1">
-              <span className="font-medium">
-                Track skill usage automatically
-              </span>
+              <span className="font-medium">Track skill usage automatically</span>
               <p className="max-w-2xl text-sm text-pretty text-muted-foreground">
-                Reads local Codex session logs every minute to record which
-                skills were loaded. Nothing is uploaded.
+                Reads the local session records of every supported agent tool and
+                records which skills were loaded. It runs on its own every hour
+                via the &quot;SkillPulse Hourly Scan&quot; task, and on demand with
+                Scan now. Nothing is uploaded.
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <StatusBadge
-              active={collectorRunning}
-              label={collectorRunning ? "On" : "Off"}
-            />
-            <Switch
-              checked={collectorRunning}
-              disabled={collectorAction !== null}
-              aria-label="Track skill usage automatically"
-              onCheckedChange={(checked) =>
-                onCollectorAction(checked ? "start" : "stop")
-              }
-            />
+
+          <div className="flex flex-col gap-2">
+            <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+              Tools covered
+            </span>
+            <div className="flex flex-wrap gap-2">
+              {(summary?.status.harnesses ?? []).map((harness) => (
+                <div
+                  key={harness.harness}
+                  className="flex items-center gap-2 rounded-md border bg-background px-3 py-1.5"
+                >
+                  <Badge variant="secondary">{harness.label}</Badge>
+                  <span className="text-xs tabular-nums text-foreground">
+                    {harness.eventCount.toLocaleString()} uses
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    last{" "}
+                    {harness.lastEventAt
+                      ? formatDateTime(harness.lastEventAt)
+                      : "never"}
+                  </span>
+                </div>
+              ))}
+              {summary && summary.status.harnesses.length === 0 ? (
+                <span className="text-sm text-muted-foreground">
+                  No usage recorded yet. Run Scan now.
+                </span>
+              ) : null}
+            </div>
+            <p className="text-xs text-pretty text-muted-foreground">
+              CommandCode used through the opencode CLI is recorded by opencode,
+              so it appears under opencode rather than as its own row.
+            </p>
           </div>
         </div>
 
         {summary ? (
           <>
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Metric
                 label="Usage history"
                 value={`${summary.status.dataCoverageDays} days`}
@@ -201,11 +217,17 @@ export function SkillPulsePanel({
                 value={summary.totals.loadedSkillCount.toString()}
               />
               <Metric
-                label="Last updated"
+                label="Recorded uses"
+                value={(summary.status.harnesses ?? [])
+                  .reduce((total, harness) => total + harness.eventCount, 0)
+                  .toLocaleString()}
+              />
+              <Metric
+                label="Last scanned"
                 value={
-                  summary.status.lastSyncAt
-                    ? formatDateTime(summary.status.lastSyncAt)
-                    : "Not yet updated"
+                  summary.status.ledgerUpdatedAt
+                    ? formatDateTime(summary.status.ledgerUpdatedAt)
+                    : "Not yet scanned"
                 }
               />
             </div>
@@ -265,30 +287,24 @@ export function SkillPulsePanel({
                     Rebuild historical usage
                   </div>
                   <p className="text-xs text-pretty text-muted-foreground">
-                    Rescans every local session log. Existing events are
-                    deduplicated; use this only when history looks incomplete.
+                    Rescans every session record from every tool and rebuilds the
+                    permanent counts. Existing events are deduplicated, so this is
+                    safe to repeat. Use it only when history looks incomplete -
+                    it takes around half a minute.
                   </p>
                 </div>
                 <Button
                   variant="outline"
                   size="sm"
-                  disabled={Boolean(syncing)}
-                  onClick={() => onSync("backfill-all")}
+                  disabled={Boolean(scanning)}
+                  onClick={() => onScan("backfill-all")}
                 >
                   <ClockIcon data-icon="inline-start" />
-                  {syncing === "backfill-all"
+                  {scanning === "backfill-all"
                     ? "Rebuilding history"
                     : "Rebuild history"}
                 </Button>
               </div>
-              {lastSync ? (
-                <p className="mt-3 text-xs text-muted-foreground">
-                  Last update scanned {lastSync.processedFileCount} session file
-                  {lastSync.processedFileCount === 1 ? "" : "s"} and found{" "}
-                  {lastSync.newEventCount} new event
-                  {lastSync.newEventCount === 1 ? "" : "s"}.
-                </p>
-              ) : null}
             </details>
           </>
         ) : (
@@ -298,7 +314,7 @@ export function SkillPulsePanel({
             }
             description="Update usage to scan local Codex session logs."
             actionLabel="Update usage now"
-            onAction={() => onSync("incremental")}
+            onAction={() => onScan("incremental")}
           />
         )}
       </CardContent>
@@ -382,29 +398,51 @@ function SkillPulseTable({
       <p className="text-sm text-muted-foreground">
         {getUsageFilterDescription(usageFilter)}
       </p>
+      <p className="text-xs text-muted-foreground">{IMMATURE_NOTE}</p>
       <div className="max-h-[44rem] overflow-auto rounded-lg border">
-        <table className="w-full min-w-[62rem] table-fixed caption-bottom text-sm xl:min-w-0">
+        <table className="w-full min-w-[74rem] table-fixed caption-bottom text-sm xl:min-w-0">
           <thead className="[&_tr]:border-b">
             <tr className="border-b">
               <th className="sticky top-0 z-20 h-10 w-10 bg-card px-2 text-left align-middle font-medium text-foreground">
                 <span className="sr-only">Select</span>
               </th>
-              <th className="sticky top-0 z-20 h-10 w-[32%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+              <th className="sticky top-0 z-20 h-10 w-[18%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
                 Skill
               </th>
-              <th className="sticky top-0 z-20 h-10 w-[14%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+              <th className="sticky top-0 z-20 h-10 w-[9%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
                 Status
               </th>
-              <th className="sticky top-0 z-20 h-10 w-[9%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+              <th
+                className="sticky top-0 z-20 h-10 w-[8%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground"
+                title="Skills younger than 60 days are never treated as unused"
+              >
+                Installed
+              </th>
+              <th className="sticky top-0 z-20 h-10 w-[7%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
                 Uses 7d
               </th>
-              <th className="sticky top-0 z-20 h-10 w-[9%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+              <th className="sticky top-0 z-20 h-10 w-[7%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
                 Uses 30d
               </th>
-              <th className="sticky top-0 z-20 h-10 w-[20%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+              <th className="sticky top-0 z-20 h-10 w-[7%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+                Uses 90d
+              </th>
+              <th
+                className="sticky top-0 z-20 h-10 w-[8%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground"
+                title="All-time uses, kept in the permanent ledger so log cleanup cannot lose them"
+              >
+                Uses total
+              </th>
+              <th
+                className="sticky top-0 z-20 h-10 w-[15%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground"
+                title="Which agent tools used this skill"
+              >
+                Used by
+              </th>
+              <th className="sticky top-0 z-20 h-10 w-[11%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
                 Last observed
               </th>
-              <th className="sticky top-0 z-20 h-10 w-[20%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
+              <th className="sticky top-0 z-20 h-10 w-[10%] bg-card px-2 text-left align-middle font-medium whitespace-nowrap text-foreground">
                 Action
               </th>
             </tr>
@@ -467,11 +505,28 @@ function SkillPulseTable({
                       {formatSkillPulseStatus(skill.effectiveStatus)}
                     </Badge>
                   </td>
+                  <td className="p-2 align-middle">
+                    <InstalledCell
+                      installedAt={skill.installedAt}
+                      ageDays={skill.ageDays}
+                      source={skill.installDateSource}
+                      loadsAllTime={skill.loadsAllTime}
+                    />
+                  </td>
                   <td className="p-2 align-middle tabular-nums">
                     {skill.loads7d}
                   </td>
                   <td className="p-2 align-middle tabular-nums">
                     {skill.loads30d}
+                  </td>
+                  <td className="p-2 align-middle tabular-nums">
+                    {skill.loads90d}
+                  </td>
+                  <td className="p-2 align-middle font-medium tabular-nums">
+                    {skill.loadsAllTime}
+                  </td>
+                  <td className="p-2 align-middle">
+                    <HarnessUsageBadges byHarness={skill.byHarness} />
                   </td>
                   <td className="p-2 align-middle text-sm text-muted-foreground">
                     {skill.lastLoadedAt
@@ -553,6 +608,83 @@ function SkillPulseActionControl({
             ? "Enable the parent plugin first"
             : "Not editable"}
         </span>
+      ) : null}
+    </div>
+  )
+}
+
+/** Short labels so the "Used by" column stays readable at a glance. */
+const HARNESS_SHORT_LABELS: Record<string, string> = {
+  codex: "Codex",
+  "claude-code": "Claude",
+  commandcode: "CmdCode",
+  opencode: "opencode",
+}
+
+/**
+ * Shows which agent tools actually invoked a skill. This is the column that
+ * stops a skill from being deleted just because the tool you happened to be
+ * watching never used it.
+ */
+function HarnessUsageBadges({ byHarness }: { byHarness: Record<string, number> }) {
+  const entries = Object.entries(byHarness).sort(
+    (left, right) => right[1] - left[1]
+  )
+
+  if (!entries.length) {
+    return <span className="text-xs text-muted-foreground">-</span>
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1">
+      {entries.map(([harness, count]) => (
+        <Badge key={harness} variant="outline" className="tabular-nums">
+          {HARNESS_SHORT_LABELS[harness] ?? harness} {count}
+        </Badge>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Install date, with an explicit "New" marker for skills too young to judge.
+ *
+ * Without this the table shows a skill added days ago sitting beside a skill
+ * that has genuinely never been used, and they look identical.
+ */
+function InstalledCell({
+  installedAt,
+  ageDays,
+  source,
+  loadsAllTime,
+}: {
+  installedAt?: string
+  ageDays?: number
+  source?: "registry" | "folder" | "unknown"
+  loadsAllTime: number
+}) {
+  if (!installedAt || ageDays === undefined) {
+    return <span className="text-xs text-muted-foreground">Unknown</span>
+  }
+
+  // Mirrors getRecommendation: a folder estimate can be later than the true
+  // install date, and proven usage means the skill is established regardless.
+  const immature =
+    ageDays < SKILL_MATURITY_DAYS && loadsAllTime < PROVEN_VALUE_USES
+
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-sm tabular-nums text-foreground">{ageDays}d ago</span>
+      <span className="text-xs text-muted-foreground">
+        {formatDateTime(installedAt)}
+      </span>
+      {immature ? (
+        <Badge variant="secondary" title="Too new to judge - excluded from cleanup">
+          {IMMATURE_LABEL}
+        </Badge>
+      ) : null}
+      {source === "folder" ? (
+        <span className="text-[10px] text-muted-foreground">estimated</span>
       ) : null}
     </div>
   )

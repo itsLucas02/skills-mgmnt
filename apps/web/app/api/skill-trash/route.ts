@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 
 import { isLocalRequest } from "@/lib/local-request"
+import { acquireSkillOperation } from "@/lib/skill-operation-lock"
 import { isSafeLocalPath, invalidateInventoryCache } from "@/lib/skills"
 import { trashSkill } from "@/lib/skill-trash"
 
@@ -31,7 +32,9 @@ export async function POST(request: Request) {
     )
   }
 
+  let release: (() => void) | undefined
   try {
+    release = acquireSkillOperation()
     const entry = trashSkill(payload.path, payload.skillName)
     invalidateInventoryCache()
     return NextResponse.json({ entry })
@@ -40,5 +43,5 @@ export async function POST(request: Request) {
       { error: error instanceof Error ? error.message : "Could not move the skill to trash." },
       { status: 500 }
     )
-  }
+  } finally { release?.() }
 }

@@ -1,4 +1,5 @@
 import type { SkillPulseSummaryResponse } from "./skillpulse.ts"
+import { formatDateTime } from "./date-format.ts"
 
 export function buildSkillPulseCsv(
   summary: SkillPulseSummaryResponse
@@ -10,7 +11,9 @@ export function buildSkillPulseCsv(
     "effectiveStatus",
     "loads7d",
     "loads30d",
+    "loads90d",
     "loadsAllTime",
+    "harnesses",
     "lastLoadedAt",
     "recommendation",
   ]
@@ -21,8 +24,15 @@ export function buildSkillPulseCsv(
     skill.effectiveStatus,
     skill.loads7d.toString(),
     skill.loads30d.toString(),
+    skill.loads90d.toString(),
     skill.loadsAllTime.toString(),
-    skill.lastLoadedAt ?? "",
+    // e.g. "codex:341|opencode:3" - kept readable so the export answers
+    // "which tools actually use this?" without opening the dashboard.
+    Object.entries(skill.byHarness)
+      .sort((left, right) => right[1] - left[1])
+      .map(([harness, count]) => `${harness}:${count}`)
+      .join("|"),
+    skill.lastLoadedAt ? formatDateTime(skill.lastLoadedAt) : "",
     skill.recommendation,
   ])
 

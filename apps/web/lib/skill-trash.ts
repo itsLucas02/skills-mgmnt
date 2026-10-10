@@ -8,6 +8,7 @@ import {
 } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
+import { isolationEntries } from "./skill-isolation.ts"
 
 type TrashEntry = {
   id: string
@@ -60,6 +61,8 @@ export function listSkillTrash(): TrashEntry[] {
 
 export function trashSkill(skillFilePath: string, skillName: string) {
   const skillDir = path.dirname(path.resolve(skillFilePath))
+  if (isolationEntries().some((entry) => entry.original === skillDir || entry.stored === skillDir))
+    throw new Error("Restore isolation before moving this skill to trash.")
   const trashDir = getTrashDir()
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
   const safeName = skillName.replace(/[^a-zA-Z0-9._-]/g, "_") || "skill"

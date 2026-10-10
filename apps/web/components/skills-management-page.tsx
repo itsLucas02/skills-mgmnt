@@ -15,7 +15,6 @@ import {
 import type { ConfigChange } from "@/lib/config-editor"
 import type {
   SkillPulseSummaryResponse,
-  SkillPulseSyncResult,
 } from "@/lib/skillpulse"
 import type { TrashEntry as SkillTrashEntry } from "@/lib/skill-trash"
 import type {
@@ -66,6 +65,7 @@ import { CompactSummary } from "./skills/compact-summary"
 import { DetailsDialog } from "./skills/details-dialog"
 import { McpTable } from "./skills/mcp-table"
 import { PageHeader } from "./skills/page-header"
+import { ProvenanceUpdatesPanel } from "./skills/provenance-updates-panel"
 import { PendingChangesBar } from "./skills/pending-changes-bar"
 import { PluginBundleList } from "./skills/plugin-bundle-list"
 import { SearchBar } from "./skills/search-bar"
@@ -90,7 +90,7 @@ type CapabilityInventory = {
   summary: SkillSummary
 }
 
-type MainTab = "manage" | "all-skills" | "usage"
+type MainTab = "manage" | "all-skills" | "usage" | "sources"
 type ManageFilter = "plugins" | "skills" | "mcp"
 
 type ApplyState = {
@@ -104,6 +104,7 @@ const mainTabs = [
   { value: "manage", label: "Manage" },
   { value: "all-skills", label: "All skills" },
   { value: "usage", label: "Usage & cleanup" },
+  { value: "sources", label: "Sources & updates" },
 ] satisfies Array<{ value: MainTab; label: string }>
 
 const COLLAPSED_PLUGINS_KEY = "skills-mgmnt-collapsed-plugins"
@@ -137,14 +138,9 @@ export function SkillsManagementPage({
   const [skillPulseSummary, setSkillPulseSummary] =
     useState<SkillPulseSummaryResponse | null>(null)
   const [skillPulseLoading, setSkillPulseLoading] = useState(false)
-  const [skillPulseSyncing, setSkillPulseSyncing] = useState<
+  const [skillPulseScanning, setSkillPulseScanning] = useState<
     "incremental" | "backfill-all" | null
   >(null)
-  const [collectorAction, setCollectorAction] = useState<
-    "start" | "stop" | null
-  >(null)
-  const [lastSkillPulseSync, setLastSkillPulseSync] =
-    useState<SkillPulseSyncResult | null>(null)
   const [trashEntries, setTrashEntries] = useState<SkillTrashEntry[]>([])
 
   const deferredQuery = useDeferredValue(query)
@@ -216,7 +212,7 @@ export function SkillsManagementPage({
       new Map(
         inventory.skills.map((skill) => [
           skill.path,
-          `${skill.name} ${skill.description} ${skill.parentPluginName ?? ""} ${skill.origin.label} ${skill.controlGate.section ?? ""} ${skill.relativePath} ${skill.parentPluginKey ?? ""}`.toLowerCase(),
+          `${skill.name} ${skill.description} ${skill.provenance?.author ?? ""} ${skill.provenance?.source ?? ""} ${skill.parentPluginName ?? ""} ${skill.origin.label} ${skill.controlGate.section ?? ""} ${skill.relativePath} ${skill.parentPluginKey ?? ""}`.toLowerCase(),
         ])
       ),
     [inventory.skills]
@@ -426,7 +422,7 @@ export function SkillsManagementPage({
       setStagedChanges({})
       setApplyOpen(false)
       setNotice(
-        `Applied ${payload.preview.length} config change${payload.preview.length === 1 ? "" : "s"}. Restart Codex for the session to load them.`
+        `Applied ${payload.preview.length} change${payload.preview.length === 1 ? "" : "s"}. Start fresh agent sessions to load them. ${payload.auditWarning ?? ""}`
       )
       router.refresh()
     } catch {
@@ -465,60 +461,47 @@ export function SkillsManagementPage({
     }
   }
 
-  async function syncSkillPulse(mode: "incremental" | "backfill-all") {
-    setSkillPulseSyncing(mode)
+  /**
+   * Kicks off a scan of every supported harness, then refreshes the summary.
+   *
+   * The scan runs in its own process (it needs SQLite for opencode), so the
+   * request returns as soon as it has started and cannot report a result
+   * synchronously. We therefore show "started" and re-read the summary shortly
+   * after - the ledger is written by then for an incremental scan.
+   */
+  async function scanSkillPulse(mode: "incremental" | "backfill-all") {
+    setSkillPulseScanning(mode)
     setNotice("")
 
     try {
-      const response = await fetch("/api/skillpulse/sync", {
+      const response = await fetch("/api/skillpulse/scan", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ mode }),
       })
       const payload = await response.json()
-      setSkillPulseSyncing(null)
 
       if (!response.ok) {
-        setNotice(payload.error ?? "Could not sync SkillPulse usage.")
-        return
-      }
-
-      setLastSkillPulseSync(payload as SkillPulseSyncResult)
-      setNotice(
-        `SkillPulse synced ${payload.newEventCount} new skill-load event${payload.newEventCount === 1 ? "" : "s"}.`
-      )
-      await loadSkillPulseSummary()
-    } catch {
-      setSkillPulseSyncing(null)
-      setNotice("Could not sync SkillPulse usage. The request failed.")
-    }
-  }
-
-  async function setSkillPulseCollector(action: "start" | "stop") {
-    setCollectorAction(action)
-    setNotice("")
-
-    try {
-      const response = await fetch(`/api/skillpulse/collector/${action}`, {
-        method: "POST",
-      })
-      const payload = await response.json()
-      setCollectorAction(null)
-
-      if (!response.ok) {
-        setNotice(payload.error ?? `Could not ${action} SkillPulse collector.`)
+        setSkillPulseScanning(null)
+        setNotice(payload.error ?? "Could not start the SkillPulse scan.")
         return
       }
 
       setNotice(
-        action === "start"
-          ? "SkillPulse collector started."
-          : "SkillPulse collector stopped."
+        mode === "backfill-all"
+          ? "Rebuilding history from every session record. This takes around half a minute."
+          : "Scan started. Coverage updates in a moment."
       )
-      await loadSkillPulseSummary()
+
+      // Incremental scans finish in a couple of seconds; a rebuild takes longer,
+      // so give it a wider window before refreshing.
+      const delayMs = mode === "backfill-all" ? 40000 : 4000
+      window.setTimeout(() => {
+        void loadSkillPulseSummary().finally(() => setSkillPulseScanning(null))
+      }, delayMs)
     } catch {
-      setCollectorAction(null)
-      setNotice(`Could not ${action} SkillPulse collector. The request failed.`)
+      setSkillPulseScanning(null)
+      setNotice("Could not start the SkillPulse scan. The request failed.")
     }
   }
 
@@ -607,11 +590,11 @@ export function SkillsManagementPage({
     <TooltipProvider>
       <main
         className={cn(
-          "min-h-svh bg-background text-foreground",
+          "dashboard min-h-svh bg-background text-foreground",
           stagedList.length && "pb-24"
         )}
       >
-        <section className="mx-auto flex w-full max-w-[96rem] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
+        <section className="mx-auto flex w-full max-w-[88rem] flex-col gap-6 px-4 py-6 sm:px-8 lg:px-10 lg:py-10">
           <PageHeader />
 
           {applyState.restartRequired ? (
@@ -652,7 +635,7 @@ export function SkillsManagementPage({
           />
 
           <Tabs value={tab} onValueChange={selectTab} className="min-w-0">
-            <TabsList aria-label="Skills management views" className="mb-4">
+            <TabsList aria-label="Skills management views" className="dashboard-navigation mb-5">
               {mainTabs.map((item) => (
                 <TabsTrigger key={item.value} value={item.value}>
                   {item.label}
@@ -843,16 +826,16 @@ export function SkillsManagementPage({
                 <SkillPulsePanel
                   summary={skillPulseSummary}
                   loading={skillPulseLoading}
-                  syncing={skillPulseSyncing}
-                  collectorAction={collectorAction}
-                  lastSync={lastSkillPulseSync}
+                  scanning={skillPulseScanning}
                   skillByUsagePath={skillByUsagePath}
                   getSkillEnabled={getSkillEnabled}
-                  onSync={syncSkillPulse}
-                  onCollectorAction={setSkillPulseCollector}
+                  onScan={scanSkillPulse}
                   onStageChange={stageChange}
                 />
               ) : null}
+            </TabsContent>
+            <TabsContent value="sources">
+              <ProvenanceUpdatesPanel skills={inventory.skills} />
             </TabsContent>
           </Tabs>
         </section>

@@ -8,6 +8,7 @@ import {
 } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
+import { isolationPreview, prepareIsolation } from "./skill-isolation.ts"
 
 export type ConfigChangeKind = "plugin" | "skill" | "mcp"
 
@@ -59,7 +60,7 @@ export function previewConfigChanges(changes: ConfigChange[]) {
       ...change,
       before,
       after: change.enabled,
-      summary: `${labelForKind(change.kind)} ${change.label}: ${formatEnabled(before)} -> ${formatEnabled(change.enabled)}`,
+      summary: `${labelForKind(change.kind)} ${change.label}: ${formatEnabled(before)} -> ${formatEnabled(change.enabled)}${change.kind === "skill" ? ` — ${isolationPreview(change.target, change.enabled)}` : ""}`,
     } satisfies ConfigChangePreview
   })
 }
@@ -235,19 +236,27 @@ export function applyConfigChanges(changes: ConfigChange[]) {
     configText
   )
   validateConfigText(nextConfigText)
-  writeFileSync(getCodexConfigPath(), nextConfigText, "utf8")
-
   const appliedAt = new Date().toISOString()
-  writeApplyState({
-    lastAppliedAt: appliedAt,
-    backupPath,
-    restartRequired: true,
-  })
+  const previousApplyState = existsSync(getApplyStatePath()) ? readFileSync(getApplyStatePath(), "utf8") : undefined
+  const isolation = prepareIsolation(normalizedChanges)
+  let auditWarning: string | undefined
+  try {
+    writeFileSync(getCodexConfigPath(), nextConfigText, "utf8")
+    auditWarning = isolation.commit()
+    writeApplyState({ lastAppliedAt: appliedAt, backupPath, restartRequired: true })
+  } catch (error) {
+    writeFileSync(getCodexConfigPath(), configText, "utf8")
+    isolation.rollback()
+    if (previousApplyState === undefined) { if (existsSync(getApplyStatePath())) unlinkSync(getApplyStatePath()) }
+    else writeFileSync(getApplyStatePath(), previousApplyState, "utf8")
+    throw error
+  }
 
   return {
     appliedAt,
     backupPath,
     preview,
+    auditWarning,
   }
 }
 
@@ -278,6 +287,7 @@ function normalizeChanges(changes: ConfigChange[]) {
   const deduped = new Map<string, ConfigChange>()
 
   for (const change of changes) {
+    if (!change || !["plugin", "skill", "mcp"].includes(change.kind) || typeof change.enabled !== "boolean" || typeof change.target !== "string") throw new Error("Invalid capability change.")
     if (!change.id || !change.target || !change.label) {
       continue
     }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 
 import { isLocalRequest } from "@/lib/local-request"
+import { acquireSkillOperation } from "@/lib/skill-operation-lock"
 import { invalidateInventoryCache } from "@/lib/skills"
 import { restoreSkill } from "@/lib/skill-trash"
 
@@ -20,7 +21,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Missing entryId." }, { status: 400 })
   }
 
+  let release: (() => void) | undefined
   try {
+    release = acquireSkillOperation()
     const entry = restoreSkill(payload.entryId)
     invalidateInventoryCache()
     return NextResponse.json({ entry })
@@ -29,5 +32,5 @@ export async function POST(request: Request) {
       { error: error instanceof Error ? error.message : "Could not restore the skill." },
       { status: 500 }
     )
-  }
+  } finally { release?.() }
 }

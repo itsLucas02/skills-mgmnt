@@ -4,6 +4,7 @@ import type { ConfigChange } from "@/lib/config-editor"
 import { applyConfigChanges } from "@/lib/config-editor"
 import { isLocalRequest } from "@/lib/local-request"
 import { invalidateInventoryCache } from "@/lib/skills"
+import { acquireSkillOperation } from "@/lib/skill-operation-lock"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -21,7 +22,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "No config changes to apply." }, { status: 400 })
   }
 
+  let release: (() => void) | undefined
   try {
+    release = acquireSkillOperation()
     const result = applyConfigChanges(payload.changes)
     invalidateInventoryCache()
     return NextResponse.json(result)
@@ -30,5 +33,5 @@ export async function POST(request: Request) {
       { error: error instanceof Error ? error.message : "Could not apply changes." },
       { status: 500 }
     )
-  }
+  } finally { release?.() }
 }

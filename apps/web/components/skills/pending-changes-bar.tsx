@@ -20,7 +20,7 @@ export function PendingChangesBar({
   const disableCount = changes.length - enableCount
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-lg">
+    <div className="dashboard-feedback fixed inset-x-0 bottom-0 z-40 border-t bg-background px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-lg">
       <div className="mx-auto flex max-w-[96rem] flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="font-medium tabular-nums">

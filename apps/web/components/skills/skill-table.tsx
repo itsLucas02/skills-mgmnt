@@ -106,6 +106,10 @@ export function SkillTable({
                     <span className="line-clamp-2 text-muted-foreground">
                       {skill.description}
                     </span>
+                    <span className="text-xs text-muted-foreground">
+                      {skill.provenance?.author ? `Author: ${skill.provenance.author} · ` : ""}
+                      {skill.provenance?.sourceUrl ? <a className="underline underline-offset-4 hover:text-foreground" href={skill.provenance.sourceUrl} target="_blank" rel="noreferrer">{skill.provenance.source ?? skill.provenance.sourceUrl}</a> : skill.provenance?.publisher ? `Plugin publisher: ${skill.provenance.publisher}` : "Source unknown"}
+                    </span>
                   </div>
                 </TableCell>
                 {showParent ? (
@@ -152,7 +156,7 @@ export function SkillTable({
                     controlGate={skill.controlGate}
                     onOpenConfigGate={onOpenConfigGate}
                     deleteTarget={
-                      onDelete && !skill.parentPluginKey
+                      onDelete && !skill.parentPluginKey && !skill.isolated
                         ? { path: skill.path, name: skill.name }
                         : undefined
                     }

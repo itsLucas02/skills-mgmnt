@@ -9,12 +9,11 @@ function buildSummary(
 ): SkillPulseSummaryResponse {
   return {
     status: {
-      enabled: false,
-      collectorRunning: false,
       lastSyncAt: undefined,
       firstEventAt: undefined,
       lastEventAt: undefined,
       dataCoverageDays: 10,
+      harnesses: [],
     },
     totals: {
       totalEvents: 0,
@@ -35,7 +34,10 @@ test("exports skill usage rows as CSV", () => {
         effectiveStatus: "active",
         loads7d: 2,
         loads30d: 5,
+        loads90d: 9,
         loadsAllTime: 9,
+        byHarness: { codex: 9 },
+        daysSinceLastUse: 12,
         lastLoadedAt: "2026-08-01T00:00:00.000Z",
         recommendation: "keep",
       },
@@ -45,11 +47,11 @@ test("exports skill usage rows as CSV", () => {
   const lines = csv.split("\r\n")
   assert.equal(
     lines[0],
-    "skillName,skillPath,parentPluginKey,effectiveStatus,loads7d,loads30d,loadsAllTime,lastLoadedAt,recommendation"
+    "skillName,skillPath,parentPluginKey,effectiveStatus,loads7d,loads30d,loads90d,loadsAllTime,harnesses,lastLoadedAt,recommendation"
   )
   assert.equal(
     lines[1],
-    "example,C:\\skills\\example\\SKILL.md,,active,2,5,9,2026-08-01T00:00:00.000Z,keep"
+    'example,C:\\skills\\example\\SKILL.md,,active,2,5,9,9,codex:9,"01/08/2026, 08:00:00",keep'
   )
 })
 
@@ -63,7 +65,10 @@ test("escapes quotes and commas in cell values", () => {
         effectiveStatus: "active",
         loads7d: 0,
         loads30d: 0,
+        loads90d: 0,
         loadsAllTime: 0,
+        byHarness: {},
+        daysSinceLastUse: null,
         lastLoadedAt: undefined,
         recommendation: "insufficient-data",
       },

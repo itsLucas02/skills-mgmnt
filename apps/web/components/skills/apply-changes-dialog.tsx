@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { ChevronDownIcon, SaveIcon } from "lucide-react"
 
-import type { ConfigChange } from "@/lib/config-editor"
+import type { ConfigChange, ConfigChangePreview } from "@/lib/config-editor"
 import {
   Dialog,
   DialogContent,
@@ -38,6 +38,8 @@ export function ApplyChangesDialog({
   onOpenChange: (open: boolean) => void
 }) {
   const [diff, setDiff] = useState<ConfigDiffEntry[] | null>(null)
+  const [preview, setPreview] = useState<ConfigChangePreview[] | null>(null)
+  const [previewError, setPreviewError] = useState("")
   const [diffLoading, setDiffLoading] = useState(false)
   const [showDiff, setShowDiff] = useState(false)
   const hasChanges = changes.length > 0
@@ -51,6 +53,8 @@ export function ApplyChangesDialog({
 
     async function loadDiff() {
       setDiffLoading(true)
+      setPreview(null)
+      setPreviewError("")
 
       try {
         const response = await fetch("/api/config/preview-changes", {
@@ -65,12 +69,15 @@ export function ApplyChangesDialog({
 
         if (response.ok) {
           setDiff((payload.diff ?? []) as ConfigDiffEntry[])
+          setPreview(payload.preview)
         } else {
           setDiff(null)
+          setPreviewError(payload.error ?? "Could not preview changes.")
         }
       } catch {
         if (!cancelled) {
           setDiff(null)
+          setPreviewError("Could not preview changes. Retry before applying.")
         }
       } finally {
         if (!cancelled) {
@@ -93,10 +100,11 @@ export function ApplyChangesDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-xl min-w-0 flex-col overflow-hidden">
         <DialogHeader className="min-w-0 shrink-0">
-          <DialogTitle>Apply staged config changes?</DialogTitle>
+          <DialogTitle>Apply staged capability changes?</DialogTitle>
           <DialogDescription>
-            This writes to your local Codex config and creates a timestamped
-            backup before the write.
+            Review the affected discovery paths below. Owner-managed skills are
+            isolated or restored; provider/native controls update Codex configuration only.
+            Backups and restore records are preserved.
           </DialogDescription>
         </DialogHeader>
 
@@ -113,6 +121,7 @@ export function ApplyChangesDialog({
                 <div className="mt-0.5 text-xs text-muted-foreground capitalize">
                   {change.kind}
                 </div>
+                <p className="mt-2 text-xs text-muted-foreground break-words">{preview?.find(p => p.id === change.id)?.summary ?? "Preparing scope preview…"}</p>
               </div>
               <StatusBadge
                 active={change.enabled}
@@ -121,6 +130,7 @@ export function ApplyChangesDialog({
             </div>
           ))}
         </div>
+        {previewError && <p role="alert" className="text-sm text-destructive">{previewError}</p>}
 
         <Button
           type="button"
@@ -181,7 +191,7 @@ export function ApplyChangesDialog({
           >
             Cancel
           </Button>
-          <Button disabled={applying || !changes.length} onClick={onApply}>
+          <Button disabled={applying || !changes.length || diffLoading || !preview || !!previewError} onClick={onApply}>
             <SaveIcon data-icon="inline-start" />
             {applying ? "Applying" : "Apply changes"}
           </Button>

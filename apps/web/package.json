@@ -10,7 +10,10 @@
     "lint": "eslint",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test \"lib/*.test.ts\""
+    "test": "node --experimental-strip-types --test \"lib/*.test.ts\"",
+    "skillpulse:scan": "node scripts/run-skillpulse-scan.mjs",
+    "skillpulse:backfill": "node scripts/run-skillpulse-scan.mjs --backfill",
+    "skillpulse:report": "node --experimental-strip-types --experimental-sqlite scripts/skillpulse-report.ts"
   },
   "dependencies": {
     "@workspace/ui": "*",

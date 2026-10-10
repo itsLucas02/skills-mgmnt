@@ -74,6 +74,33 @@ test("extracts skill load events from Codex function-call session lines", () => 
   assert.equal(events[0]?.source, "session-jsonl-skill-read")
 })
 
+test("extracts skill load events from the newer custom_tool_call input schema", () => {
+  // Codex moved the command payload from `arguments` to `input` when it
+  // introduced custom_tool_call. Reading only `arguments` silently stopped all
+  // recording from roughly July 2026 onward, so keep this case covered.
+  const skillPath = "C:\\Users\\User\\.codex\\skills\\dataviz\\SKILL.md"
+  const line = JSON.stringify({
+    timestamp: "2026-09-21T10:00:00.000Z",
+    type: "response_item",
+    payload: {
+      type: "custom_tool_call",
+      call_id: "call_456",
+      name: "exec_command",
+      input: `const r = await tools.exec_command({"cmd":"Get-Content -Raw '${skillPath}'"});`,
+    },
+  })
+
+  const events = extractSkillPulseEventsFromSessionLine(line, {
+    sessionFile: "C:\\Users\\User\\.codex\\sessions\\2026\\09\\21\\rollout.jsonl",
+    sessionId: "session-2",
+  })
+
+  assert.equal(events.length, 1)
+  assert.equal(events[0]?.skillPath, skillPath)
+  assert.equal(events[0]?.skillName, "dataviz")
+  assert.equal(events[0]?.source, "session-jsonl-skill-read")
+})
+
 test("syncs appended session lines once and stores offset state", () => {
   const root = mkdtempSync(path.join(tmpdir(), "skillpulse-"))
   const codexHome = path.join(root, ".codex")
